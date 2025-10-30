@@ -120,9 +120,10 @@ npm run dev
 ## Documentation
 
 For detailed setup and configuration:
+- **[🚀 Quick Start - Free Hosting](QUICK_START_FREE.md)** - Deploy online in 5 minutes (FREE)
 - [Setup Instructions](SETUP_INSTRUCTIONS.md) - Complete setup guide
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) - Server deployment instructions
-- **[Free Hosting Options](FREE_HOSTING_OPTIONS.md)** - 🆓 Deploy online for FREE
+- [Free Hosting Options](FREE_HOSTING_OPTIONS.md) - 🆓 All free deployment options
 - [Google Sheets Setup](GOOGLE_SHEETS_SETUP.md) - Google Sheets integration
 - [Optimization Notes](OPTIMIZATION_NOTES.md) - Performance and deployment tips
 
