@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Message Viewer</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fab fa-whatsapp"></i> WhatsApp Message Viewer</h1>
+            <p>Connect your WhatsApp and view messages for any phone number</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Navigation Menu -->
+            <div class="nav-menu">
+                <button class="nav-btn active" data-section="status">
+                    <i class="fas fa-home"></i> Home
+                </button>
+                <button class="nav-btn" data-section="messages">
+                    <i class="fas fa-comments"></i> Messages
+                </button>
+                <button class="nav-btn" data-section="groups">
+                    <i class="fas fa-users"></i> Customer Groups
+                </button>
+                <button class="nav-btn" data-section="secretCode">
+                    <i class="fas fa-search"></i> Secret Code Search
+                </button>
+            </div>
+
+            <!-- Connection Status -->
+            <div class="status-card" id="statusCard">
+                <div class="status-indicator" id="statusIndicator">
+                    <i class="fas fa-circle"></i>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+
+            <!-- QR Code Section -->
+            <div class="qr-section" id="qrSection" style="display: none;">
+                <h2>Scan QR Code with WhatsApp</h2>
+                <div class="qr-container">
+                    <div id="qrCode"></div>
+                </div>
+                <p class="qr-instructions">
+                    1. Open WhatsApp on your phone<br>
+                    2. Go to Settings > Linked Devices<br>
+                    3. Tap "Link a Device"<br>
+                    4. Scan this QR code
+                </p>
+            </div>
+
+            <!-- Phone Number Input -->
+            <div class="phone-section" id="phoneSection" style="display: none;">
+                
+                <!-- Time Range Filter -->
+                <div class="time-filter-section">
+                    <h3><i class="fas fa-clock"></i> Time Range Filter</h3>
+                    
+                    <!-- Time Range Summary -->
+                    <div class="time-range-summary" id="timeRangeSummary" style="display: none;">
+                        <p class="summary-text" id="summaryText">No time filter applied</p>
+                        <p class="summary-details" id="summaryDetails">All messages will be shown</p>
+                    </div>
+                    
+                    <!-- Quick Presets -->
+                    <div class="time-presets">
+                        <h4><i class="fas fa-bolt"></i> Quick Presets</h4>
+                        <div class="preset-buttons">
+                            <button class="preset-btn" data-preset="today">Today</button>
+                            <button class="preset-btn" data-preset="yesterday">Yesterday</button>
+                            <button class="preset-btn" data-preset="last7days">Last 7 Days</button>
+                            <button class="preset-btn" data-preset="last30days">Last 30 Days</button>
+                            <button class="preset-btn" data-preset="thisweek">This Week</button>
+                            <button class="preset-btn" data-preset="lastweek">Last Week</button>
+                            <button class="preset-btn" data-preset="thismonth">This Month</button>
+                            <button class="preset-btn" data-preset="custom">Custom Range</button>
+                        </div>
+                    </div>
+                    
+                    <div class="time-filter-controls">
+                        <div class="date-time-group">
+                            <label><i class="fas fa-calendar-plus"></i> From Date & Time</label>
+                            <input type="date" id="fromDate" class="date-input" title="Select start date">
+                            <div class="time-slider-container">
+                                <label>Time: <span id="fromTimeDisplay" class="time-display">00:00</span></label>
+                                <input type="range" id="fromTimeSlider" min="0" max="1439" value="0" class="time-slider" title="Select start time">
+                            </div>
+                        </div>
+                        
+                        <div class="date-time-group">
+                            <label><i class="fas fa-calendar-minus"></i> To Date & Time</label>
+                            <input type="date" id="toDate" class="date-input" title="Select end date">
+                            <div class="time-slider-container">
+                                <label>Time: <span id="toTimeDisplay" class="time-display">23:59</span></label>
+                                <input type="range" id="toTimeSlider" min="0" max="1439" value="1439" class="time-slider" title="Select end time">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="filter-actions">
+                        <button id="applyTimeFilter" class="btn btn-primary">
+                            <i class="fas fa-filter"></i> Apply Time Filter
+                        </button>
+                        <button id="clearTimeFilter" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear Filter
+                        </button>
+                        <button id="resetTimeFilter" class="btn btn-info">
+                            <i class="fas fa-undo"></i> Reset to Default
+                        </button>
+                    </div>
+                </div>
+                    
+            <!-- Text Filter -->
+            <div class="text-filter-group">
+                <label>Text Filter:</label>
+                <div class="text-filter-input">
+                    <input type="text" id="textFilter" placeholder="Enter text to filter messages (e.g., 👍P, 👍C, Once Joined, Once Completed)" class="text-input">
+                    <div class="text-filter-actions">
+                        <button id="applyTextFilter" class="btn btn-info">
+                            <i class="fas fa-search"></i> Filter Text
+                        </button>
+                        <button id="clearTextFilter" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear Text
+                        </button>
+                    </div>
+                </div>
+                <div class="text-filter-info">
+                    <small>Examples: 👍P, 👍C, "Once Joined", "Once Completed", or any text pattern</small>
+                </div>
+            </div>
+
+            <!-- Hours Filter -->
+            <div class="hours-filter-group">
+                <label>Hours Filter:</label>
+                <div class="hours-filter-input">
+                    <input type="number" id="hoursFilter" placeholder="Enter hours (e.g., 2, 6, 12, 24)" class="hours-input" min="1" max="168">
+                    <div class="hours-filter-actions">
+                        <button id="applyHoursFilter" class="btn btn-warning">
+                            <i class="fas fa-clock"></i> Filter Last Hours
+                        </button>
+                        <button id="clearHoursFilter" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear Hours
+                        </button>
+                    </div>
+                </div>
+                <div class="hours-filter-info">
+                    <small>Show messages from the last X hours (1-168 hours = 1 week)</small>
+                </div>
+            </div>
+
+            <!-- Select Contacts & Groups (Moved from Phone Section) -->
+            <div class="select-contacts-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+                <h3 style="margin-top: 0; margin-bottom: 15px;"><i class="fas fa-users"></i> Select Contacts & Groups</h3>
+                
+                <!-- Chat Selector -->
+                <div class="chat-selector">
+                    <button id="loadChatsBtn" class="btn btn-info">
+                        <i class="fas fa-list"></i> Load All Chats
+                    </button>
+                    <div class="chat-filters">
+                        <button id="showAllBtn" class="filter-btn active">All</button>
+                        <button id="showContactsBtn" class="filter-btn">Contacts</button>
+                        <button id="showGroupsBtn" class="filter-btn">Groups</button>
+                    </div>
+                    <div class="chat-list" id="chatList" style="display: none;">
+                        <!-- Available chats will appear here -->
+                    </div>
+                </div>
+                
+                <!-- Manual Input -->
+                <div class="manual-input">
+                    <h4 style="margin-top: 20px;">Or Enter Manually</h4>
+                    <div class="input-group">
+                        <input type="text" id="phoneInput" placeholder="Enter phone number or group ID (e.g., +1234567890, 1234567890@c.us, or 120363123456789012@g.us)" />
+                        <button id="addPhoneBtn" class="btn btn-secondary">
+                            <i class="fas fa-plus"></i> Add
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="phone-list" id="phoneList">
+                    <!-- Added phone numbers will appear here -->
+                </div>
+                <div class="input-actions">
+                    <button id="setPhoneBtn" class="btn btn-primary" disabled>
+                        <i class="fas fa-search"></i> View Merged Messages
+                    </button>
+                    <button id="clearPhonesBtn" class="btn btn-danger">
+                        <i class="fas fa-trash"></i> Clear All
+                    </button>
+                    <button id="saveListBtn" class="btn btn-success" disabled>
+                        <i class="fas fa-save"></i> Save List
+                    </button>
+                    <button id="loadListBtn" class="btn btn-info">
+                        <i class="fas fa-folder-open"></i> Load Saved
+                    </button>
+                    <button id="customerListBtn" class="btn btn-warning">
+                        <i class="fas fa-users"></i> Customer List
+                    </button>
+                </div>
+                <p class="phone-instructions" style="margin-top: 10px; font-size: 14px; color: #6c757d;">
+                    Select from your chats or manually enter phone numbers/group IDs to view merged messages.
+                </p>
+            </div>
+
+            <!-- Customer Selector -->
+            <div class="customer-selector-group">
+                <label>Filter by Customer:</label>
+                <div class="customer-selector-input">
+                    <select id="customerSelector" class="customer-dropdown">
+                        <option value="">-- All Customers --</option>
+                        <!-- Options will be populated dynamically -->
+                    </select>
+                    <div class="customer-selector-actions">
+                        <button id="applyCustomerSelector" class="btn btn-primary">
+                            <i class="fas fa-filter"></i> Filter
+                        </button>
+                        <button id="clearCustomerSelector" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear
+                        </button>
+                    </div>
+                </div>
+                <div class="customer-selector-info">
+                    <small>Select a specific customer to show only their messages</small>
+                </div>
+            </div>
+
+            <!-- Customer Messages Filter -->
+            <div class="customer-filter-group">
+                <label>Customer Messages Filter:</label>
+                <div class="customer-filter-input">
+                    <div class="customer-filter-actions">
+                        <button id="applyCustomerFilter" class="btn btn-success">
+                            <i class="fas fa-users"></i> Show Only Customer Messages
+                        </button>
+                        <button id="clearCustomerFilter" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Show All Messages
+                        </button>
+                    </div>
+                </div>
+                <div class="customer-filter-info">
+                    <small>Show only messages sent by customers (hide your own messages)</small>
+                </div>
+            </div>
+                </div>
+            </div>
+
+            <!-- Customer Groups Section -->
+            <div class="groups-section" id="groupsSection" style="display: none;">
+                <div class="groups-header">
+                    <h2>Customer Groups</h2>
+                    <div class="header-actions">
+                        <button id="loadGroupsBtn" class="btn btn-primary">
+                            <i class="fas fa-sync"></i> Load from Google Sheets
+                        </button>
+                        <button id="refreshGroupsBtn" class="btn btn-secondary">
+                            <i class="fas fa-refresh"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="groups-container" id="groupsContainer">
+                    <div class="loading" id="loadingGroups">
+                        <i class="fas fa-spinner fa-spin"></i> Loading groups...
+                    </div>
+                </div>
+            </div>
+
+
+            <!-- Secret Code Search Section -->
+            <div class="secret-code-section" id="secretCodeSection" style="display: none;">
+                <div class="secret-code-header">
+                    <h2><i class="fas fa-search"></i> Secret Code Search</h2>
+                    <div class="header-actions">
+                        <button id="refreshSecretCodeBtn" class="btn btn-secondary">
+                            <i class="fas fa-refresh"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Input Phase -->
+                <div class="secret-code-input-phase" id="secretCodeInputPhase">
+                    <div class="form-group">
+                        <label for="secretCodeInput">Secret Code to Search:</label>
+                        <input type="text" id="secretCodeInput" placeholder="Enter secret code (e.g., 'REPLY123')" class="form-control">
+                        <div class="form-check" style="margin-top: 8px;">
+                            <input type="checkbox" id="includeThumbsUp" class="form-check-input">
+                            <label for="includeThumbsUp" class="form-check-label">
+                                Include 👍 in secret code matching
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="secretCodeGroupSelect">Select Group:</label>
+                        <select id="secretCodeGroupSelect" class="form-control">
+                            <option value="">Select a group...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="secretCodeTimeRange">Time Range:</label>
+                        <select id="secretCodeTimeRange" class="form-control">
+                            <option value="1">Last 1 hour</option>
+                            <option value="2">Last 2 hours</option>
+                            <option value="6">Last 6 hours</option>
+                            <option value="12">Last 12 hours</option>
+                            <option value="24" selected>Last 24 hours</option>
+                            <option value="48">Last 48 hours</option>
+                            <option value="168">Last 7 days</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button id="startSecretCodeSearch" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Search Messages
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Customer List Phase -->
+                <div class="secret-code-customer-phase" id="secretCodeCustomerPhase" style="display: none;">
+                    <div class="customer-list-header">
+                        <h3>Customer List - Secret Code Search Results</h3>
+                        <div class="search-info">
+                            <span id="searchInfoText"></span>
+                        </div>
+                    </div>
+                    <div class="customer-list-container">
+                        <div class="customer-list" id="secretCodeCustomerList">
+                            <!-- Customer list will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Message Viewing Phase -->
+                <div class="secret-code-message-phase" id="secretCodeMessagePhase" style="display: none;">
+                    <div class="message-viewer-header">
+                        <h3>Message Viewer</h3>
+                        <div class="customer-info">
+                            <span id="selectedCustomerInfo"></span>
+                        </div>
+                        <button id="backToCustomerListBtn" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to Customer List
+                        </button>
+                    </div>
+                    <div class="message-viewer-container">
+                        <div class="message-list" id="secretCodeMessageList">
+                            <!-- Messages will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Group Message Section -->
+            <div class="group-message-section" id="groupMessageSection" style="display: none;">
+                <div class="group-message-header">
+                    <h2>Send Message to Group</h2>
+                    <button id="backToGroupsBtn" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left"></i> Back to Groups
+                    </button>
+                </div>
+                <div class="group-message-form">
+                    <div class="form-group">
+                        <label>Recipients:</label>
+                        <div class="recipients-header">
+                            <div class="recipients-header-left">
+                                <button id="selectAllRecipientsBtn" class="btn btn-sm">
+                                    <i class="fas fa-check-square"></i> Select All
+                                </button>
+                                <button id="deselectAllRecipientsBtn" class="btn btn-sm">
+                                    <i class="fas fa-square"></i> Deselect All
+                                </button>
+                            </div>
+                            <div class="recipients-header-right">
+                                <span class="recipient-count-badge" id="recipientCountBadge">0 selected</span>
+                            </div>
+                        </div>
+                        <div class="recipients-list" id="recipientsList">
+                            <!-- Recipients will be displayed here -->
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="groupMessageInput">Message:</label>
+                        <div class="emoji-quick-buttons">
+                            <button type="button" class="emoji-btn" data-emoji="👍" title="Thumbs Up">👍</button>
+                            <button type="button" class="emoji-btn" data-emoji="👏" title="Clap">👏</button>
+                            <button type="button" class="emoji-btn" data-emoji="🙏" title="Thanks/Prayer">🙏</button>
+                        </div>
+                        <textarea id="groupMessageInput" placeholder="Enter your message here..." rows="4"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="groupMediaInput">Media URL (optional):</label>
+                        <input type="url" id="groupMediaInput" placeholder="https://example.com/image.jpg">
+                    </div>
+                    <div class="form-actions">
+                        <button id="sendGroupMessageBtn" class="btn btn-success">
+                            <i class="fas fa-paper-plane"></i> Send to Selected
+                        </button>
+                        <button id="previewGroupBtn" class="btn btn-info">
+                            <i class="fas fa-eye"></i> Preview
+                        </button>
+                    </div>
+                </div>
+                <div class="group-message-results" id="groupMessageResults" style="display: none;">
+                    <!-- Results will be displayed here -->
+                </div>
+            </div>
+
+            <!-- Messages Section -->
+            <div class="messages-section" id="messagesSection" style="display: none;">
+                <div class="messages-header">
+                    <h2>Merged Messages <span id="targetPhoneDisplay"></span></h2>
+                    <div class="header-actions">
+                        <button id="copyTextBtn" class="btn btn-info">
+                            <i class="fas fa-copy"></i> Copy Text
+                        </button>
+                        <button id="refreshBtn" class="btn btn-secondary">
+                            <i class="fas fa-refresh"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="messages-container" id="messagesContainer">
+                    <div class="loading" id="loadingMessages">
+                        <i class="fas fa-spinner fa-spin"></i> 
+                        <span class="loading-text">Loading messages...</span>
+                    </div>
+                    <div class="load-more-container" id="loadMoreContainer" style="display: none;">
+                        <button id="loadMoreBtn" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> Load More Messages (Last 30 Days)
+                        </button>
+                        <div class="message-count-info" id="messageCountInfo"></div>
+                    </div>
+                </div>
+                <button id="scrollToBottom" class="scroll-to-bottom" style="display: none;">
+                    <i class="fas fa-arrow-down"></i>
+                </button>
+            </div>
+
+            <!-- Error Messages -->
+            <div class="error-message" id="errorMessage" style="display: none;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span id="errorText"></span>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

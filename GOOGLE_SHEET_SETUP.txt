@@ -1,0 +1,56 @@
+Google Sheets Integration Setup Complete!
+
+🔑 Your Service Account Email:
+whatsapp-bot-service@main-nova-346211.iam.gserviceaccount.com
+
+📋 Next Steps:
+
+1. CREATE A GOOGLE SHEET:
+   - Go to https://sheets.google.com
+   - Create a new spreadsheet
+   - Name it something like "Customer Groups"
+
+2. SHARE YOUR SHEET:
+   - Click the "Share" button in the top right
+   - Add this email address:
+     whatsapp-bot-service@main-nova-346211.iam.gserviceaccount.com
+   - Give it "Editor" permissions
+   - Click "Send"
+
+3. COPY YOUR SPREADSHEET ID:
+   - Look at the URL of your Google Sheet
+   - It will look like: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
+   - Copy the SPREADSHEET_ID part
+
+4. UPDATE YOUR .env FILE:
+   - Open the .env file in your project
+   - Replace "your-spreadsheet-id-here" with your actual Spreadsheet ID
+   - Save the file
+
+5. GOOGLE SHEET FORMAT:
+   Create your customer groups with this structure:
+   
+   Sheet 1: "Group1"
+   | Name        | Phone Number | Email           |
+   |-------------|--------------|-----------------|
+   | John Doe    | 9876543210   | john@email.com |
+   | Jane Smith  | 9876543211   | jane@email.com |
+   
+   Sheet 2: "Group2"
+   | Name        | Phone Number | Email           |
+   |-------------|--------------|-----------------|
+   | Bob Wilson  | 9876543212   | bob@email.com |
+   | Alice Brown | 9876543213   | alice@email.com |
+
+   Important:
+   - Each sheet = One customer group
+   - First row must be headers
+   - Phone number column can be named: "phone", "number", "whatsapp"
+   - Name column can be named: "name", "customer"
+
+6. RESTART SERVER:
+   - After updating .env, restart your server
+   - Then go to "Customer Groups" tab in the web app
+   - Click "Load from Google Sheets" to import your groups
+
+✅ Done! You can now send messages to your customer groups via WhatsApp!
