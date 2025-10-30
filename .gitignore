@@ -30,7 +30,9 @@ Thumbs.db
 
 # Google Sheets credentials
 Gsheet/*.json
-!Gsheet/README.md
+
+# Keep a placeholder for documentation
+!Gsheet/credentials.example.json
 
 # Build outputs
 dist/

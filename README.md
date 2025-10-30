@@ -1,12 +1,17 @@
-# WhatsApp Message Viewer
+# WhatsApp Forwarder
 
-A web application that connects to WhatsApp via QR code scanning and displays messages for any given phone number.
+A comprehensive WhatsApp web application for managing customer groups, forwarding messages, and tracking attendance. Built with Node.js, Express, and whatsapp-web.js.
 
 ## Features
 
 - 🔗 Connect to WhatsApp using QR code scanning
-- 📱 View messages for any phone number
-- 🔄 Real-time message updates
+- 📱 View and filter messages with date/time controls
+- 🔄 Real-time message updates via WebSocket
+- 📋 Customer Group Management via Google Sheets
+- 📤 Bulk message forwarding to groups
+- ✅ Attendance tracking and marking
+- 🔍 Secret code monitoring
+- 📋 Copy messages to clipboard for analysis
 - 📱 Responsive web interface
 - 🔒 Secure local authentication
 
@@ -24,6 +29,14 @@ A web application that connects to WhatsApp via QR code scanning and displays me
 
 ```bash
 npm install
+```
+
+4. Configure environment variables (optional for Google Sheets):
+
+```bash
+# Create .env file from example
+copy .env.example .env
+# Edit .env with your Google Sheets credentials
 ```
 
 ## Usage
@@ -57,9 +70,31 @@ npm run dev
 ## How it Works
 
 1. **QR Code Authentication**: The app generates a QR code that you scan with your WhatsApp mobile app to authenticate
-2. **Message Retrieval**: Once authenticated, you can enter any phone number to view their messages
-3. **Real-time Updates**: New messages are displayed in real-time using Socket.IO
-4. **Local Storage**: Authentication data is stored locally for future sessions
+2. **Message Retrieval**: Once authenticated, you can add phone numbers or load customer groups from Google Sheets
+3. **Message Filtering**: Filter messages by date range, time, or number of days
+4. **Group Management**: Load customer groups from Google Sheets, send bulk messages, and track attendance
+5. **Real-time Updates**: New messages are displayed in real-time using Socket.IO
+6. **Attendance Tracking**: Mark customer attendance directly in Google Sheets
+
+## Advanced Features
+
+### Customer Groups
+- Load customer groups from Google Sheets
+- Each sheet represents a customer group
+- Automatic phone number formatting
+- Send messages to selected customers
+
+### Message Filtering
+- Filter by date range with time slider
+- Filter by number of days
+- Filter by hours
+- View only incoming messages
+
+### Attendance System
+- Mark customer attendance
+- Track attendance in Google Sheets
+- Generate absentee lists
+- Send follow-up messages to absentees
 
 ## Security Notes
 
@@ -82,10 +117,17 @@ npm run dev
 - Safari
 - Edge
 
+## Documentation
+
+For detailed setup and configuration:
+- [Setup Instructions](SETUP_INSTRUCTIONS.md) - Complete setup guide
+- [Google Sheets Setup](GOOGLE_SHEETS_SETUP.md) - Google Sheets integration
+- [Optimization Notes](OPTIMIZATION_NOTES.md) - Performance and deployment tips
+
 ## License
 
 MIT License - feel free to use and modify as needed.
 
 ## Disclaimer
 
-This application is for educational purposes. Please respect privacy and use responsibly. Only view messages you have legitimate access to.
+This application is for educational and legitimate business purposes only. Please respect privacy and use responsibly. Only view messages you have legitimate access to.
