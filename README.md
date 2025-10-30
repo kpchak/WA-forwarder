@@ -121,6 +121,7 @@ npm run dev
 
 For detailed setup and configuration:
 - [Setup Instructions](SETUP_INSTRUCTIONS.md) - Complete setup guide
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) - **Server deployment instructions**
 - [Google Sheets Setup](GOOGLE_SHEETS_SETUP.md) - Google Sheets integration
 - [Optimization Notes](OPTIMIZATION_NOTES.md) - Performance and deployment tips
 
