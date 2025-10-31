@@ -2759,7 +2759,7 @@ function forwardMessage(messageId, message) {
     });
 }
 
-function executeForward(messageId, button) {
+async function executeForward(messageId, button) {
     const selectedGroups = Array.from(document.querySelectorAll('.group-checkbox:checked')).map(cb => cb.value);
     
     if (selectedGroups.length === 0) {
@@ -2777,6 +2777,57 @@ function executeForward(messageId, button) {
     button.disabled = true;
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Forwarding...';
     
+    // Check if media needs to be downloaded
+    let mediaUrl = message.mediaUrl || '';
+    let mediaType = message.mediaMimetype || '';
+    let mediaFilename = message.mediaFilename || '';
+    
+    if (message.hasMedia && !message.mediaUrl) {
+        // Media hasn't been downloaded yet, try to get it from attachedMedia
+        const attached = attachedMedia[messageId];
+        if (attached) {
+            mediaUrl = attached.mediaUrl;
+            mediaType = attached.mediaMimetype;
+            mediaFilename = attached.mediaFilename;
+        } else {
+            // Need to download the media first
+            showNotification('Downloading media for forwarding...', 'info');
+            try {
+                const chatId = message.sourcePhone || message.from;
+                const downloadedMedia = await downloadMessageMedia(messageId, chatId);
+                if (downloadedMedia) {
+                    mediaUrl = downloadedMedia.mediaUrl;
+                    mediaType = downloadedMedia.mediaMimetype;
+                    mediaFilename = downloadedMedia.mediaFilename;
+                    
+                    // Store in attachedMedia for future use
+                    attachedMedia[messageId] = {
+                        mediaUrl: downloadedMedia.mediaUrl,
+                        mediaFilename: downloadedMedia.mediaFilename,
+                        mediaMimetype: downloadedMedia.mediaMimetype,
+                        sourcePhone: chatId
+                    };
+                    
+                    // Also update messageStore
+                    message.mediaUrl = downloadedMedia.mediaUrl;
+                    message.mediaMimetype = downloadedMedia.mediaMimetype;
+                    message.mediaFilename = downloadedMedia.mediaFilename;
+                } else {
+                    showNotification('Failed to download media. Sending text only.', 'warning');
+                    mediaUrl = '';
+                    mediaType = '';
+                    mediaFilename = '';
+                }
+            } catch (error) {
+                console.error('Error downloading media:', error);
+                showNotification('Failed to download media. Sending text only.', 'warning');
+                mediaUrl = '';
+                mediaType = '';
+                mediaFilename = '';
+            }
+        }
+    }
+    
     // Forward to each selected group
     let completed = 0;
     let total = selectedGroups.length;
@@ -2790,10 +2841,10 @@ function executeForward(messageId, button) {
                 },
                 body: JSON.stringify({
                     message: message.body || '',
-                    mediaUrl: message.mediaUrl || '',
-                    mediaType: message.mediaMimetype || '',
-                    mediaFilename: message.mediaFilename || '',
-                    hasMedia: message.hasMedia || false
+                    mediaUrl: mediaUrl,
+                    mediaType: mediaType,
+                    mediaFilename: mediaFilename,
+                    hasMedia: message.hasMedia && mediaUrl && mediaType
                 })
             });
             
