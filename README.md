@@ -117,13 +117,23 @@ npm run dev
 - Safari
 - Edge
 
+## 🚀 Want to Host Online?
+
+**Quick Deploy Guide**: **[QUICK_DEPLOY.md](QUICK_DEPLOY.md)** - Get online in 5 minutes (FREE!)
+
+### Best Options:
+- 🥇 **Railway** - FREE tier, easiest setup (recommended)
+- 🥈 **Render** - FREE tier, auto-deploy
+- 💰 **Paid options** - $5-7/month for 24/7 hosting
+
 ## Documentation
 
 For detailed setup and configuration:
-- **[🚀 Quick Start - Free Hosting](QUICK_START_FREE.md)** - Deploy online in 5 minutes (FREE)
+- **[🚀 Quick Deploy](QUICK_DEPLOY.md)** - All hosting options explained
+- **[🚀 Quick Start - Free Hosting](QUICK_START_FREE.md)** - Railway step-by-step
+- [Free Hosting Options](FREE_HOSTING_OPTIONS.md) - 🆓 All free deployment options
 - [Setup Instructions](SETUP_INSTRUCTIONS.md) - Complete setup guide
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) - Server deployment instructions
-- [Free Hosting Options](FREE_HOSTING_OPTIONS.md) - 🆓 All free deployment options
 - [Google Sheets Setup](GOOGLE_SHEETS_SETUP.md) - Google Sheets integration
 - [Optimization Notes](OPTIMIZATION_NOTES.md) - Performance and deployment tips
 
