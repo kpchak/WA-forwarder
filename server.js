@@ -384,9 +384,11 @@ app.post('/messages-merged', async (req, res) => {
             timeFilterStart = parseInt(fromTimestamp);
             timeFilterEnd = parseInt(toTimestamp);
             days = Math.ceil((timeFilterEnd - timeFilterStart) / (1000 * 60 * 60 * 24));
-            estimatedLimit = Math.max(50, days * 50);
+            // Increase limit significantly for time-filtered queries to get all messages
+            // Use at least 500 messages per day, or calculate based on days
+            estimatedLimit = Math.max(500, days * 500);
             messages = await chat.fetchMessages({ limit: estimatedLimit });
-            console.log(`Using precise datetime filter from=${new Date(timeFilterStart).toLocaleString()}, to=${new Date(timeFilterEnd).toLocaleString()}, days=${days}`);
+            console.log(`Using precise datetime filter from=${new Date(timeFilterStart).toLocaleString()}, to=${new Date(timeFilterEnd).toLocaleString()}, days=${days}, limit=${estimatedLimit}`);
           } else {
             // Fallback to days-based filtering
             days = parseInt(req.query.days) || parseInt(req.body.days) || 7;
@@ -423,7 +425,12 @@ app.post('/messages-merged', async (req, res) => {
           console.log(`No filter - loading last 5 messages only for fast performance`);
         }
         
-        console.log(`Messages fetched from ${phoneNumber}:`, messages.length);
+        console.log(`\n=== DEBUG for ${phoneNumber} ===`);
+        console.log(`Messages fetched: ${messages.length}`);
+        console.log(`Time filter enabled: ${timeFilterStart > 0}`);
+        if (timeFilterStart > 0) {
+          console.log(`Filter range: ${new Date(timeFilterStart).toLocaleString()} to ${new Date(timeFilterEnd).toLocaleString()}`);
+        }
         
         // Debug: Show date range of fetched messages
         if (messages.length > 0) {
@@ -431,24 +438,25 @@ app.post('/messages-merged', async (req, res) => {
           const newestMsg = messages[0];
           console.log(`Date range for ${phoneNumber}:`, {
             oldest: new Date(oldestMsg.timestamp * 1000).toLocaleString(),
-            newest: new Date(newestMsg.timestamp * 1000).toLocaleString(),
-            filterStart: timeFilterStart > 0 ? new Date(timeFilterStart).toLocaleString() : 'none'
+            newest: new Date(newestMsg.timestamp * 1000).toLocaleString()
           });
+        } else {
+          console.log(`No messages fetched from ${phoneNumber} - chat might be empty or inaccessible`);
         }
         
-        // Filter messages from the specified time range AND only incoming messages (not from me)
+        // Filter messages from the specified time range
         const recentMessages = messages.filter(msg => {
           const messageDate = msg.timestamp * 1000;
           const isWithinTimeRange = timeFilterStart === 0 || (messageDate >= timeFilterStart && messageDate <= timeFilterEnd);
-          const isIncoming = !msg.fromMe; // Only show messages received from customers, not sent to them
-          return isWithinTimeRange && isIncoming;
+          return isWithinTimeRange;
         });
         
         if (timeFilterStart > 0 && timeFilterEnd > 0) {
-          console.log(`Recent messages from ${phoneNumber} (custom range ${new Date(timeFilterStart).toLocaleString()} to ${new Date(timeFilterEnd).toLocaleString()}):`, recentMessages.length);
+          console.log(`Recent messages from ${phoneNumber} (custom range): ${recentMessages.length}`);
         } else {
-          console.log(`Recent messages from ${phoneNumber} (last ${days} days):`, recentMessages.length);
+          console.log(`Recent messages from ${phoneNumber} (last ${days} days): ${recentMessages.length}`);
         }
+        console.log(`=== END DEBUG ===\n`);
         
         // Debug: Show some sample recent messages
         if (recentMessages.length > 0) {
@@ -469,13 +477,23 @@ app.post('/messages-merged', async (req, res) => {
         }
         
         // Process each recent message
+        console.log(`\nProcessing ${recentMessages.length} recent messages from ${phoneNumber}...`);
+        let processedCount = 0;
+        let skippedCount = 0;
+        
         for (const msg of recentMessages) {
-          const messageId = `${msg.fromMe}_${msg.from}_${msg.id}`;
+          // Use _serialized ID like GET endpoint to properly track unique messages
+          const messageId = msg.id?._serialized || msg.id || `${msg.fromMe}_${msg.from}_${msg.timestamp}`;
+          
+          console.log(`  Message ${processedCount + skippedCount + 1}/${recentMessages.length}: ID=${messageId}, timestamp=${new Date(msg.timestamp * 1000).toLocaleString()}, fromMe=${msg.fromMe}, body="${msg.body?.substring(0, 50) || '(no body)'}..."`);
           
           if (uniqueMessages.has(messageId)) {
+            console.log(`    ⚠️ SKIPPED - Duplicate messageId: ${messageId}`);
+            skippedCount++;
             continue; // Skip duplicate messages
           }
           uniqueMessages.add(messageId);
+          processedCount++;
           
           // Get sender information
           let senderName = 'Unknown';
@@ -530,6 +548,9 @@ app.post('/messages-merged', async (req, res) => {
           allMessages.push(messageData);
         }
         
+        console.log(`✓ Processed ${processedCount} messages, skipped ${skippedCount} duplicates for ${phoneNumber}`);
+        console.log(`  Total messages in collection so far: ${allMessages.length}\n`);
+        
         // Add a small delay between processing each phone number to prevent overwhelming the API
         if (i < phoneNumbers.length - 1) {
           console.log('Waiting 25ms before next request...');
@@ -542,7 +563,19 @@ app.post('/messages-merged', async (req, res) => {
       }
     }
     
+    console.log(`\n========== FINAL SUMMARY ==========`);
     console.log(`Total unique messages found: ${allMessages.length}`);
+    console.log(`From ${phoneNumbers.length} phone numbers:`, phoneNumbers);
+    console.log(`Unique message IDs tracked: ${uniqueMessages.size}`);
+    
+    // Show breakdown by source phone
+    const messagesBySource = {};
+    allMessages.forEach(msg => {
+      const source = msg.sourcePhone || 'unknown';
+      messagesBySource[source] = (messagesBySource[source] || 0) + 1;
+    });
+    console.log(`Messages by source:`, messagesBySource);
+    console.log(`=====================================\n`);
     
     // Clear timeout since we completed successfully
     clearTimeout(timeout);

@@ -917,9 +917,16 @@ function loadMergedMessages() {
     const queryString = queryParams.toString();
     const url = '/messages-merged' + (queryString ? '?' + queryString : '');
     
-    console.log('Fetching from URL:', url);
+    console.log('Fetching merged messages for selected phone numbers:', currentPhoneNumbers);
     
-    fetch(url)
+    // Use POST to send currentPhoneNumbers to get messages ONLY from selected list
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ phoneNumbers: currentPhoneNumbers })
+    })
     .then(response => {
         console.log('Response status:', response.status);
         return response.json();
@@ -940,7 +947,7 @@ function loadMergedMessages() {
             displayMessages(data.messages);
             populateCustomerSelector(); // Populate dropdown with senders from loaded messages
             
-            console.log(`Loaded ${data.totalMessages} unique messages from ${data.phoneNumbers.length} phone numbers`);
+            console.log(`Loaded ${data.totalMessages} unique messages from ${data.phoneNumbers ? data.phoneNumbers.length : 0} phone numbers`);
         } else {
             messagesContainer.innerHTML = '<div class="no-messages">No messages found for the selected phone numbers.</div>';
             allMessages = []; // Reset messages array
