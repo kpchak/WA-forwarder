@@ -577,6 +577,8 @@ socket.on('clientStatus', function(data) {
     }
 });
 
+let qrCountdownInterval = null;
+
 socket.on('qrCode', function(data) {
     console.log('📱 QR Code received');
     qrCodeData = data.qrImage; // Store QR code data
@@ -585,6 +587,35 @@ socket.on('qrCode', function(data) {
     qrSection.style.display = 'block';
     phoneSection.style.display = 'none';
     messagesSection.style.display = 'none';
+    
+    // Show countdown warning
+    const warningEl = document.getElementById('qrRefreshWarning');
+    const countdownEl = document.getElementById('qrCountdown');
+    if (warningEl && countdownEl) {
+        warningEl.style.display = 'block';
+        
+        // Clear any existing countdown
+        if (qrCountdownInterval) {
+            clearInterval(qrCountdownInterval);
+        }
+        
+        // Start countdown from 20 seconds
+        let seconds = 20;
+        countdownEl.textContent = seconds;
+        
+        qrCountdownInterval = setInterval(() => {
+            seconds--;
+            if (seconds <= 0) {
+                countdownEl.textContent = 'Refreshing...';
+                clearInterval(qrCountdownInterval);
+                setTimeout(() => {
+                    if (warningEl) warningEl.style.display = 'none';
+                }, 1000);
+            } else {
+                countdownEl.textContent = seconds;
+            }
+        }, 1000);
+    }
 });
 
 socket.on('clientReady', function(data) {
@@ -592,6 +623,16 @@ socket.on('clientReady', function(data) {
     updateStatus('connected', 'WhatsApp Connected');
     qrSection.style.display = 'none';
     phoneSection.style.display = 'block';
+    
+    // Clear QR countdown
+    if (qrCountdownInterval) {
+        clearInterval(qrCountdownInterval);
+        qrCountdownInterval = null;
+    }
+    const warningEl = document.getElementById('qrRefreshWarning');
+    if (warningEl) {
+        warningEl.style.display = 'none';
+    }
 });
 
 socket.on('authFailure', function(data) {

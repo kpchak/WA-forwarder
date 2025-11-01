@@ -43,6 +43,9 @@
             <!-- QR Code Section -->
             <div class="qr-section" id="qrSection" style="display: none;">
                 <h2>Scan QR Code with WhatsApp</h2>
+                <div class="qr-refresh-warning" id="qrRefreshWarning" style="display: none; background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 5px; margin-bottom: 15px; text-align: center;">
+                    <strong>⚠️ Quick!</strong> QR code expires in <span id="qrCountdown">20</span> seconds. Scan now!
+                </div>
                 <div class="qr-container">
                     <div id="qrCode"></div>
                 </div>
@@ -50,7 +53,8 @@
                     1. Open WhatsApp on your phone<br>
                     2. Go to Settings > Linked Devices<br>
                     3. Tap "Link a Device"<br>
-                    4. Scan this QR code
+                    4. <strong>Quickly scan this QR code</strong> (expires in ~20 seconds)<br>
+                    5. QR code will refresh automatically if not scanned
                 </p>
             </div>
 
