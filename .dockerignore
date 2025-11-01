@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Session and cache (these will be created at runtime)
+.wwebjs_cache/
+.wwebjs_auth/
+session/
+temp/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Google Sheets credentials (should use environment variables)
+Gsheet/*.json
+!Gsheet/credentials.example.json
+
+# Build outputs
+dist/
+build/
+
+# Git
+.git/
+.gitignore
+
+# Documentation (optional - remove if you want to include docs)
+*.md
+!README.md
+
+# Test files (optional)
+test/
+tests/
+__tests__/
+*.test.js
+*.spec.js
+
