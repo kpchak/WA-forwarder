@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Use Node.js 18 LTS
 FROM node:18-slim
 
@@ -78,7 +77,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Start the application
 CMD ["node", "server.js"]
-=======
->>>>>>> bffa8a387e054117a4eed4d24e3c5c8e8ec73c5f
-
-
