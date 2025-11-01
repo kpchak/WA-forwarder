@@ -633,6 +633,19 @@ socket.on('clientReady', function(data) {
     if (warningEl) {
         warningEl.style.display = 'none';
     }
+    
+    // Show success notification
+    showNotification('WhatsApp connected successfully! ✓', 'success');
+    
+    // Show session note on Railway
+    const sessionNote = document.getElementById('sessionNote');
+    if (sessionNote && window.location.hostname !== 'localhost') {
+        sessionNote.style.display = 'block';
+        // Hide after 10 seconds
+        setTimeout(() => {
+            if (sessionNote) sessionNote.style.display = 'none';
+        }, 10000);
+    }
 });
 
 socket.on('authFailure', function(data) {

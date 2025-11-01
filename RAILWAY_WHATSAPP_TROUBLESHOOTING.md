@@ -5,15 +5,21 @@
 Your logs show:
 - ✅ Server is running correctly
 - ✅ QR codes are being generated
-- ✅ WhatsApp authenticated successfully at one point (16:51:43)
-- ⚠️ But QR codes keep regenerating
+- ✅ WhatsApp authenticated successfully (e.g., 17:11:39, 16:51:43)
+- ✅ Connection works fine after scanning
+- ⚠️ But you need to scan again after page refresh
 
-## Why QR Codes Keep Regenerating
+## This is Normal Behavior!
+
+**Important**: This is NOT a bug - it's expected behavior on Railway's free tier.
+
+### Why You Need to Rescan After Refresh
 
 ### Reason 1: Railway Containers Are Stateless
 - Railway containers restart and lose data
 - WhatsApp session files (`.wwebjs_auth/`) are lost on restart
 - You need to scan QR code again after each restart/deploy
+- **Even a page refresh can trigger this on Railway's free tier**
 
 ### Reason 2: QR Code Expiration
 - WhatsApp QR codes expire in ~20 seconds
