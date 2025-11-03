@@ -145,15 +145,36 @@ async function downloadAndDisplayMedia(messageId, sourcePhone) {
     
     // Format chatId from sourcePhone
     let chatId = sourcePhone;
-    if (!sourcePhone.includes('@')) {
-      // It's a phone number, format it properly
+    
+    // Check if sourcePhone contains group format with sender (e.g., "120363341879375384@g.us:919840407490@c.us")
+    if (sourcePhone && sourcePhone.includes('@g.us')) {
+      // Extract just the group ID part (before the colon)
+      const groupMatch = sourcePhone.match(/^([^:]+@g\.us)/);
+      if (groupMatch) {
+        chatId = groupMatch[1];
+      } else {
+        chatId = sourcePhone; // Use as-is if no sender part
+      }
+    } else if (sourcePhone && sourcePhone.includes('@c.us')) {
+      // Already has @c.us, use as-is
+      chatId = sourcePhone;
+    } else if (sourcePhone && !sourcePhone.includes('@')) {
+      // It's a phone number without @ suffix, determine if it's a group or contact
       let formattedNumber = sourcePhone;
       if (sourcePhone.startsWith('+')) {
         formattedNumber = sourcePhone.substring(1);
       }
       formattedNumber = formattedNumber.replace(/\D/g, '');
-      chatId = `${formattedNumber}@c.us`;
+      
+      // Check if it's a group ID (15-20 digits starting with 120)
+      if (formattedNumber.length >= 15 && formattedNumber.length <= 20 && formattedNumber.startsWith('120')) {
+        chatId = `${formattedNumber}@g.us`;
+      } else {
+        chatId = `${formattedNumber}@c.us`;
+      }
     }
+    
+    console.log(`[MEDIA] Downloading from chat: ${chatId} (original sourcePhone: ${sourcePhone})`);
     
     const mediaData = await downloadMessageMedia(messageId, chatId);
     
@@ -242,15 +263,38 @@ async function forwardMessageWithMedia(messageId, sourcePhone) {
       // Try to download the media first
       showNotification('Downloading media for forwarding...', 'info');
       
+      // Format chatId properly - handle group IDs
       let chatId = sourcePhone;
-      if (!sourcePhone.includes('@')) {
+      
+      // Check if sourcePhone contains group format with sender
+      if (sourcePhone && sourcePhone.includes('@g.us')) {
+        // Extract just the group ID part (before the colon)
+        const groupMatch = sourcePhone.match(/^([^:]+@g\.us)/);
+        if (groupMatch) {
+          chatId = groupMatch[1];
+        } else {
+          chatId = sourcePhone; // Use as-is if no sender part
+        }
+      } else if (sourcePhone && sourcePhone.includes('@c.us')) {
+        // Already has @c.us, use as-is
+        chatId = sourcePhone;
+      } else if (sourcePhone && !sourcePhone.includes('@')) {
+        // It's a phone number without @ suffix, determine if it's a group or contact
         let formattedNumber = sourcePhone;
         if (sourcePhone.startsWith('+')) {
           formattedNumber = sourcePhone.substring(1);
         }
         formattedNumber = formattedNumber.replace(/\D/g, '');
-        chatId = `${formattedNumber}@c.us`;
+        
+        // Check if it's a group ID (15-20 digits starting with 120)
+        if (formattedNumber.length >= 15 && formattedNumber.length <= 20 && formattedNumber.startsWith('120')) {
+          chatId = `${formattedNumber}@g.us`;
+        } else {
+          chatId = `${formattedNumber}@c.us`;
+        }
       }
+      
+      console.log(`[FORWARD_MEDIA] Downloading with chatId: ${chatId} (original: ${sourcePhone})`);
       
       const downloadedMedia = await downloadMessageMedia(messageId, chatId);
       if (!downloadedMedia) {
@@ -655,7 +699,16 @@ socket.on('authFailure', function(data) {
 
 socket.on('clientDisconnected', function(data) {
     console.log('Client disconnected:', data.reason);
-    updateStatus('connecting', 'Reconnecting...');
+    const reason = data.reason || 'Connection lost';
+    const requiresReconnect = data.requiresReconnect || false;
+    
+    if (requiresReconnect) {
+        updateStatus('disconnected', 'Session Closed - Please Reconnect');
+        showError('WhatsApp session has been closed. Please refresh the page and scan the QR code again to reconnect.');
+    } else {
+        updateStatus('connecting', 'Reconnecting...');
+    }
+    
     qrSection.style.display = 'block';
     phoneSection.style.display = 'none';
     messagesSection.style.display = 'none';
@@ -981,16 +1034,30 @@ function loadMergedMessages() {
         },
         body: JSON.stringify({ phoneNumbers: currentPhoneNumbers })
     })
-    .then(response => {
+    .then(async response => {
         console.log('Response status:', response.status);
-        return response.json();
-    })
-    .then(data => {
+        
+        // Check for session closure error (503)
+        if (response.status === 503) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'WhatsApp session closed');
+        }
+        
+        const data = await response.json();
         console.log('Response data:', data);
         loadingMessages.style.display = 'none';
         
         if (data.error) {
-            showError(`Error: ${data.error}${data.details ? ' - ' + data.details : ''}`);
+            // Check if it requires reconnection
+            if (data.requiresReconnect) {
+                showError(`⚠️ ${data.message || data.error}. Please refresh the page and scan QR code to reconnect.`);
+                // Update UI to show reconnection needed
+                updateStatus('disconnected', 'Session Closed');
+                qrSection.style.display = 'block';
+                phoneSection.style.display = 'none';
+            } else {
+                showError(`Error: ${data.error}${data.details ? ' - ' + data.details : ''}`);
+            }
             return;
         }
         
@@ -1011,7 +1078,16 @@ function loadMergedMessages() {
     .catch(error => {
         console.error('Error loading merged messages:', error);
         loadingMessages.style.display = 'none';
-        showError('Failed to load merged messages: ' + error.message);
+        
+        // Check if it's a session closure error
+        if (error.message && (error.message.includes('session closed') || error.message.includes('Session closed') || error.message.includes('disconnected'))) {
+            showError('⚠️ WhatsApp session has been closed. Please refresh the page and scan the QR code again to reconnect.');
+            updateStatus('disconnected', 'Session Closed');
+            qrSection.style.display = 'block';
+            phoneSection.style.display = 'none';
+        } else {
+            showError('Failed to load merged messages: ' + error.message);
+        }
     });
 }
 
@@ -1156,7 +1232,7 @@ function addMessageToContainer(message) {
                 <button onclick="copyMediaLink('${message.mediaUrl}')" class="copy-btn">
                     <i class="fas fa-copy"></i> Copy Link
                 </button>
-                <button onclick="forwardMessageWithMedia('${message.id}', '${message.sourcePhone || message.from}')" class="forward-btn">
+                <button onclick="forwardMessageWithMedia('${message.id}', '${message.from && message.from.includes('@g.us') ? message.from : (message.sourcePhone || message.from)}')" class="forward-btn">
                     <i class="fas fa-share"></i> Forward to Customers
                 </button>
             </div>`;
@@ -1166,7 +1242,7 @@ function addMessageToContainer(message) {
                 <div class="media-placeholder">
                     <i class="fas fa-file"></i>
                     <div class="media-info">📎 ${message.mediaNote}</div>
-                    <button onclick="downloadAndDisplayMedia('${message.id}', '${message.sourcePhone || message.from}')" class="download-media-btn">
+                    <button onclick="downloadAndDisplayMedia('${message.id}', '${message.from && message.from.includes('@g.us') ? message.from : (message.sourcePhone || message.from)}')" class="download-media-btn">
                         <i class="fas fa-download"></i> Download Media
                     </button>
                 </div>
@@ -1238,7 +1314,11 @@ function addMessageToContainer(message) {
         markAttendanceBtnElement.addEventListener('click', function() {
             const customerPhone = this.getAttribute('data-customer-phone');
             const messageTimestamp = this.getAttribute('data-message-timestamp');
-            markAttendanceFromMessage(customerPhone, messageTimestamp);
+            const messageId = messageDiv.getAttribute('data-message-id');
+            const message = messageStore[messageId] || allMessages.find(m => m.id === messageId);
+            const messageBody = message ? (message.body || '') : '';
+            const timestamp = messageTimestamp ? parseInt(messageTimestamp) : null; // Ensure it's a number
+            markAttendanceFromMessage(customerPhone, messageTimestamp, messageBody);
         });
     }
     
@@ -1626,16 +1706,6 @@ function displayGroups(groups) {
                 <h3 class="group-name">${group.name}</h3>
                 <span class="group-count">${group.totalCustomers}</span>
             </div>
-            <div class="group-info">
-                <div class="group-info-item">
-                    <span>Customers:</span>
-                    <span>${group.totalCustomers}</span>
-                </div>
-                <div class="group-info-item">
-                    <span>Last Updated:</span>
-                    <span>${new Date(group.lastUpdated).toLocaleDateString()}</span>
-                </div>
-            </div>
             <div class="group-actions">
                 <button class="btn btn-primary" onclick="viewGroupDetails('${group.name}')">
                     <i class="fas fa-eye"></i> View
@@ -1771,6 +1841,9 @@ function viewGroupDetails(groupName) {
     const group = currentGroups[groupName];
     if (!group) return;
     
+    // Store the selected group for attendance marking
+    selectedGroup = groupName;
+    
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.innerHTML = `
@@ -1801,10 +1874,10 @@ function viewGroupDetails(groupName) {
                                         <span class="customer-phone">${customer.phone}</span>
                                     </div>
                                     <div class="customer-actions">
-                                        <button class="btn btn-sm btn-info" onclick="markAttendance('${groupName}', '${customer.phone}', 'present')">
+                                        <button class="btn btn-sm btn-info" onclick="markAttendance('${groupName}', '${customer.phone}', 'present', '')">
                                             <i class="fas fa-check"></i> Present
                                         </button>
-                                        <button class="btn btn-sm btn-warning" onclick="markAttendance('${groupName}', '${customer.phone}', 'absent')">
+                                        <button class="btn btn-sm btn-warning" onclick="markAttendance('${groupName}', '${customer.phone}', 'absent', '')">
                                             <i class="fas fa-times"></i> Absent
                                         </button>
                                     </div>
@@ -2056,8 +2129,10 @@ function previewGroupMessage() {
     });
 }
 
-async function markAttendance(groupName, customerPhone, status) {
+async function markAttendance(groupName, customerPhone, status, message = '') {
     try {
+        console.log(`[ATTENDANCE] Marking attendance - Group: ${groupName}, Customer: ${customerPhone}, Status: ${status}, Message: ${message ? message.substring(0, 50) : '(none)'}`);
+        
         const response = await fetch(`/groups/${groupName}/attendance`, {
             method: 'POST',
             headers: {
@@ -2065,7 +2140,9 @@ async function markAttendance(groupName, customerPhone, status) {
             },
             body: JSON.stringify({
                 customerPhone: customerPhone,
-                status: status
+                status: status,
+                message: message,
+                messageTimestamp: null // For manual marking, use current time (null = server will use current time)
             })
         });
         
@@ -2085,6 +2162,10 @@ async function markAttendance(groupName, customerPhone, status) {
 // Check absentees for a group
 async function checkAbsentees(groupName) {
     try {
+        // Store the selected group for attendance marking
+        selectedGroup = groupName;
+        console.log(`[DEBUG] Selected group set to: ${groupName}`);
+        
         const response = await fetch(`/groups/${groupName}/absentees`);
         const data = await response.json();
         
@@ -2854,7 +2935,41 @@ async function executeForward(messageId, button) {
             // Need to download the media first
             showNotification('Downloading media for forwarding...', 'info');
             try {
-                const chatId = message.sourcePhone || message.from;
+                // Format chatId properly - handle group IDs
+                let chatId = message.sourcePhone || message.from;
+                
+                // If sourcePhone doesn't have @ suffix, we need to determine if it's a group
+                if (chatId && !chatId.includes('@g.us') && !chatId.includes('@c.us')) {
+                    // Check if message.from has group info (format: groupId@senderId)
+                    if (message.from && message.from.includes('@g.us')) {
+                        // Extract group ID from format like "120363341879375384@g.us:919840407490@c.us"
+                        const groupMatch = message.from.match(/^([^:]+@g\.us)/);
+                        if (groupMatch) {
+                            chatId = groupMatch[1];
+                        } else {
+                            // If it's just the number, check if it's a group ID (15-20 digits starting with 120)
+                            const formattedNumber = chatId.replace(/\D/g, '');
+                            if (formattedNumber.length >= 15 && formattedNumber.length <= 20 && formattedNumber.startsWith('120')) {
+                                chatId = `${formattedNumber}@g.us`;
+                            } else {
+                                chatId = `${formattedNumber}@c.us`;
+                            }
+                        }
+                    } else {
+                        // Regular contact - format as @c.us
+                        const formattedNumber = chatId.replace(/\D/g, '');
+                        chatId = `${formattedNumber}@c.us`;
+                    }
+                } else if (message.from && message.from.includes('@g.us') && !chatId.includes('@g.us')) {
+                    // Extract group ID from message.from if chatId doesn't have it
+                    const groupMatch = message.from.match(/^([^:]+@g\.us)/);
+                    if (groupMatch) {
+                        chatId = groupMatch[1];
+                    }
+                }
+                
+                console.log(`[FORWARD] Downloading media with chatId: ${chatId} (from: ${message.from}, sourcePhone: ${message.sourcePhone})`);
+                
                 const downloadedMedia = await downloadMessageMedia(messageId, chatId);
                 if (downloadedMedia) {
                     mediaUrl = downloadedMedia.mediaUrl;
@@ -3017,14 +3132,14 @@ function selectCustomerGroup(groupName) {
             <div class="modal-body">
                 <div class="customer-list-info">
                     <p><strong>Group:</strong> ${groupName} (${group.totalCustomers} customers)</p>
-                    <div class="customer-list-controls" style="margin: 15px 0;">
-                        <button class="btn btn-sm btn-primary" onclick="selectAllCustomers()" style="margin-right: 10px;">
+                    <div class="customer-list-controls" style="margin: 15px 0; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-sm btn-primary" onclick="selectAllCustomers()">
                             Select All
                         </button>
-                        <button class="btn btn-sm btn-secondary" onclick="deselectAllCustomers()" style="margin-right: 10px;">
+                        <button class="btn btn-sm btn-secondary" onclick="deselectAllCustomers()">
                             Deselect All
                         </button>
-                        <button class="btn btn-sm btn-success" onclick="loadSelectedMessages()" style="margin-right: 10px;">
+                        <button class="btn btn-sm btn-success" onclick="loadSelectedMessages()">
                             <i class="fas fa-search"></i> Load Selected Messages
                         </button>
                     </div>
@@ -3046,14 +3161,6 @@ function selectCustomerGroup(groupName) {
                             `;
                         }).join('')}
                     </div>
-                </div>
-                <div class="customer-list-actions" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd;">
-                    <button class="btn btn-primary" onclick="loadSelectedMessages()">
-                        <i class="fas fa-search"></i> Load Selected Messages
-                    </button>
-                    <button class="btn btn-secondary modal-close" style="margin-left: 10px;">
-                        <i class="fas fa-times"></i> Cancel
-                    </button>
                 </div>
             </div>
         </div>
@@ -3163,35 +3270,41 @@ function deselectAllCustomers() {
 }
 
 // Mark attendance from a message
-async function markAttendanceFromMessage(customerPhone, messageTimestamp) {
+async function markAttendanceFromMessage(customerPhone, messageTimestamp, messageBody = '') {
     try {
-        // Find which group this customer belongs to
-        let foundGroup = null;
+        // First, try to use selectedGroup if available (when viewing a specific group)
+        let foundGroup = selectedGroup;
+        console.log(`[ATTENDANCE] Selected group: ${selectedGroup || '(none)'}`);
         
-        Object.keys(currentGroups).forEach(groupName => {
-            const group = currentGroups[groupName];
-            if (group.customers && Array.isArray(group.customers)) {
-                const customer = group.customers.find(c => {
-                    // Remove non-digits for comparison
-                    const cleanCustomerPhone = c.phone.replace(/\D/g, '');
-                    const cleanMessagePhone = customerPhone.replace(/\D/g, '');
-                    return cleanCustomerPhone === cleanMessagePhone;
-                });
-                if (customer) {
-                    foundGroup = groupName;
+        // If no selected group, find which groups this customer belongs to
+        if (!foundGroup) {
+            Object.keys(currentGroups).forEach(groupName => {
+                const group = currentGroups[groupName];
+                if (group.customers && Array.isArray(group.customers)) {
+                    const customer = group.customers.find(c => {
+                        // Remove non-digits for comparison
+                        const cleanCustomerPhone = c.phone.replace(/\D/g, '');
+                        const cleanMessagePhone = customerPhone.replace(/\D/g, '');
+                        return cleanCustomerPhone === cleanMessagePhone;
+                    });
+                    if (customer && !foundGroup) {
+                        foundGroup = groupName; // Use first match
+                    }
                 }
-            }
-        });
+            });
+        }
         
         if (!foundGroup) {
-            showNotification('Customer not found in any group', 'error');
+            showNotification('Customer not found in any group. Please select a group first.', 'error');
             return;
         }
         
         // Use current month (YYYY-MM format)
         const currentMonth = new Date().toISOString().slice(0, 7);
         
-        // Call the attendance endpoint
+        console.log(`[ATTENDANCE] Using group: ${foundGroup}, Customer: ${customerPhone}, Message: ${messageBody ? messageBody.substring(0, 50) : '(none)'}`);
+        
+        // Call the attendance endpoint with message content
         const response = await fetch(`/groups/${foundGroup}/attendance`, {
             method: 'POST',
             headers: {
@@ -3200,7 +3313,9 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp) {
             body: JSON.stringify({
                 customerPhone: customerPhone,
                 status: 'present',
-                month: currentMonth
+                month: currentMonth,
+                message: messageBody,
+                messageTimestamp: messageTimestamp ? parseInt(messageTimestamp) : null // Pass message timestamp
             })
         });
         

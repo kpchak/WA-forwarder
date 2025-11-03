@@ -19,16 +19,16 @@
             <!-- Navigation Menu -->
             <div class="nav-menu">
                 <button class="nav-btn active" data-section="status">
-                    <i class="fas fa-home"></i> Home
-                </button>
-                <button class="nav-btn" data-section="messages">
-                    <i class="fas fa-comments"></i> Messages
+                    <i class="fas fa-home"></i> <span class="nav-btn-text">Home</span>
                 </button>
                 <button class="nav-btn" data-section="groups">
-                    <i class="fas fa-users"></i> Customer Groups
+                    <i class="fas fa-users"></i> <span class="nav-btn-text">Customer Groups</span>
+                </button>
+                <button class="nav-btn" data-section="messages">
+                    <i class="fas fa-comments"></i> <span class="nav-btn-text">Messages</span>
                 </button>
                 <button class="nav-btn" data-section="secretCode">
-                    <i class="fas fa-search"></i> Secret Code Search
+                    <i class="fas fa-search"></i> <span class="nav-btn-text">Secret Code Search</span>
                 </button>
             </div>
 
@@ -194,20 +194,20 @@
                     <!-- Added phone numbers will appear here -->
                 </div>
                 <div class="input-actions">
-                    <button id="setPhoneBtn" class="btn btn-primary" disabled>
-                        <i class="fas fa-search"></i> View Merged Messages
-                    </button>
-                    <button id="clearPhonesBtn" class="btn btn-danger">
-                        <i class="fas fa-trash"></i> Clear All
-                    </button>
                     <button id="saveListBtn" class="btn btn-success" disabled>
                         <i class="fas fa-save"></i> Save List
                     </button>
                     <button id="loadListBtn" class="btn btn-info">
                         <i class="fas fa-folder-open"></i> Load Saved
                     </button>
-                    <button id="customerListBtn" class="btn btn-warning">
+                    <button id="customerListBtn" class="btn btn-secondary">
                         <i class="fas fa-users"></i> Customer List
+                    </button>
+                    <button id="clearPhonesBtn" class="btn btn-danger">
+                        <i class="fas fa-trash"></i> Clear All
+                    </button>
+                    <button id="setPhoneBtn" class="btn btn-primary" disabled>
+                        <i class="fas fa-search"></i> View Merged Messages
                     </button>
                 </div>
                 <p class="phone-instructions" style="margin-top: 10px; font-size: 14px; color: #6c757d;">
@@ -243,7 +243,7 @@
                 <div class="customer-filter-input">
                     <div class="customer-filter-actions">
                         <button id="applyCustomerFilter" class="btn btn-success">
-                            <i class="fas fa-users"></i> Show Only Customer Messages
+                            <i class="fas fa-users"></i> Hide My Messages
                         </button>
                         <button id="clearCustomerFilter" class="btn btn-secondary">
                             <i class="fas fa-times"></i> Show All Messages
@@ -251,7 +251,7 @@
                     </div>
                 </div>
                 <div class="customer-filter-info">
-                    <small>Show only messages sent by customers (hide your own messages)</small>
+                    <small>Hide your own messages (show only messages sent by customers)</small>
                 </div>
             </div>
                 </div>

@@ -344,6 +344,12 @@ app.post('/messages-merged', async (req, res) => {
       console.log(`Processing contact/group ${i + 1}/${allContacts.length}: ${phoneNumber}`);
       
       try {
+        // Check if client is still ready before attempting to fetch
+        if (!isClientReady) {
+          console.error(`Client not ready. Cannot fetch messages for ${phoneNumber}`);
+          throw new Error('WhatsApp client session is closed. Please reconnect by scanning QR code.');
+        }
+
         const chatId = phoneNumber.includes('@') ? phoneNumber : `${phoneNumber}@c.us`;
         const sourcePhoneClean = (phoneNumber.includes('@') ? phoneNumber.replace(/@.*/, '') : phoneNumber).replace(/\D/g, '');
         console.log('Getting chat for ID:', chatId);
@@ -560,7 +566,30 @@ app.post('/messages-merged', async (req, res) => {
         
       } catch (error) {
         console.error(`Error fetching messages from ${phoneNumber}:`, error);
-        // Continue with next phone number instead of failing completely
+        
+        // Check if it's a session closure error
+        if (error.message && (error.message.includes('Session closed') || error.message.includes('page has been closed'))) {
+          console.error('⚠️ CRITICAL: WhatsApp session has been closed! Client needs to reconnect.');
+          isClientReady = false;
+          if (io && io.engine && io.engine.clientsCount > 0) {
+            io.emit('clientDisconnected', { 
+              reason: 'Session closed. Please scan QR code again to reconnect.',
+              requiresReconnect: true 
+            });
+          }
+          // Clear timeout and return error response
+          clearTimeout(timeout);
+          if (!res.headersSent) {
+            return res.status(503).json({ 
+              error: 'WhatsApp session closed',
+              message: 'The WhatsApp session has been disconnected. Please refresh the page and scan the QR code again to reconnect.',
+              requiresReconnect: true
+            });
+          }
+        }
+        
+        // For other errors, continue with next phone number instead of failing completely
+        continue;
       }
     }
     
@@ -910,38 +939,138 @@ app.get('/chats', async (req, res) => {
 
 // Endpoint to download media for a specific message
 app.post('/download-media', async (req, res) => {
+  console.log('📥 Download media request received:', req.body);
+  
   if (!isClientReady) {
+    console.error('❌ WhatsApp client not ready');
     return res.status(400).json({ error: 'WhatsApp client not ready' });
   }
   
   const { messageId, chatId } = req.body;
   
   if (!messageId || !chatId) {
+    console.error('❌ Missing required parameters:', { messageId: !!messageId, chatId: !!chatId });
     return res.status(400).json({ error: 'Message ID and Chat ID are required' });
   }
   
   try {
-    console.log(`Downloading media for message ${messageId} from chat ${chatId}`);
+    console.log(`📥 Downloading media for message ${messageId} from chat ${chatId}`);
+    
+    // Validate chatId format
+    if (!chatId || (!chatId.includes('@c.us') && !chatId.includes('@g.us'))) {
+      console.error(`❌ Invalid chatId format: ${chatId}`);
+      return res.status(400).json({ error: 'Invalid chat ID format', chatId: chatId });
+    }
     
     const chat = await client.getChatById(chatId);
-    const messages = await chat.fetchMessages({ limit: 100 });
+    if (!chat) {
+      console.error(`❌ Chat not found: ${chatId}`);
+      return res.status(404).json({ error: 'Chat not found', chatId: chatId });
+    }
+    console.log(`✅ Chat found: ${chat.name || chatId}`);
     
-    const message = messages.find(msg => msg.id._serialized === messageId);
+    const messages = await chat.fetchMessages({ limit: 100 });
+    console.log(`✅ Fetched ${messages.length} messages to search`);
+    
+    // Try to find message by _serialized ID first, then by various custom formats
+    let message = messages.find(msg => {
+      const serializedId = msg.id?._serialized;
+      
+      // Try exact match first
+      if (serializedId === messageId) return true;
+      
+      // Try matching just the serialized part if messageId contains it
+      if (serializedId && messageId.includes(serializedId)) return true;
+      
+      // Try custom formats
+      const customId1 = `${msg.fromMe}_${msg.from}_${serializedId || msg.timestamp}`;
+      if (customId1 === messageId) return true;
+      
+      // Try format: fromMe_from_serializedId_timestamp@lid
+      if (serializedId) {
+        const customId2 = `${msg.fromMe}_${msg.from}_${serializedId}_${msg.timestamp}@lid`;
+        if (customId2 === messageId) return true;
+        
+        // Try matching parts of the ID
+        const messageIdParts = messageId.split('_');
+        if (messageIdParts.length >= 2) {
+          const fromMeMatch = messageIdParts[0] === String(msg.fromMe);
+          const fromMatch = messageIdParts[1] && msg.from.includes(messageIdParts[1].replace(/@.*/, ''));
+          const serializedMatch = messageIdParts.some(part => part === serializedId || serializedId.includes(part.replace(/@.*/, '')));
+          
+          if (fromMeMatch && fromMatch && serializedMatch) {
+            console.log(`✅ Matched message by parts: fromMe=${fromMeMatch}, from=${fromMatch}, serialized=${serializedMatch}`);
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    });
     
     if (!message) {
+      console.error(`❌ Message not found in first 100: ${messageId}`);
+      // Try fetching more messages if not found in first 100
+      const moreMessages = await chat.fetchMessages({ limit: 500 });
+      const message2 = moreMessages.find(msg => {
+        const serializedId = msg.id?._serialized;
+        
+        if (serializedId === messageId) return true;
+        if (serializedId && messageId.includes(serializedId)) return true;
+        
+        const customId1 = `${msg.fromMe}_${msg.from}_${serializedId || msg.timestamp}`;
+        if (customId1 === messageId) return true;
+        
+        if (serializedId) {
+          const customId2 = `${msg.fromMe}_${msg.from}_${serializedId}_${msg.timestamp}@lid`;
+          if (customId2 === messageId) return true;
+          
+          // Try matching parts
+          const messageIdParts = messageId.split('_');
+          if (messageIdParts.length >= 2) {
+            const fromMeMatch = messageIdParts[0] === String(msg.fromMe);
+            const fromMatch = messageIdParts[1] && msg.from.includes(messageIdParts[1].replace(/@.*/, ''));
+            const serializedMatch = messageIdParts.some(part => part === serializedId || serializedId.includes(part.replace(/@.*/, '')));
+            if (fromMeMatch && fromMatch && serializedMatch) return true;
+          }
+        }
+        
+        return false;
+      });
+      if (message2) {
+        console.log(`✅ Message found in extended search`);
+        if (!message2.hasMedia) {
+          return res.status(400).json({ error: 'Message does not contain media' });
+        }
+        const media = await message2.downloadMedia();
+        if (!media) {
+          return res.status(500).json({ error: 'Failed to download media' });
+        }
+        return res.json({
+          success: true,
+          mediaUrl: `data:${media.mimetype};base64,${media.data}`,
+          mediaFilename: media.filename || `media_${messageId}`,
+          mediaMimetype: media.mimetype,
+          mediaSize: media.data.length
+        });
+      }
       return res.status(404).json({ error: 'Message not found' });
     }
     
     if (!message.hasMedia) {
+      console.error(`❌ Message does not contain media: ${messageId}`);
       return res.status(400).json({ error: 'Message does not contain media' });
     }
     
+    console.log(`📥 Downloading media from message...`);
     const media = await message.downloadMedia();
     
     if (!media) {
+      console.error(`❌ Failed to download media: ${messageId}`);
       return res.status(500).json({ error: 'Failed to download media' });
     }
     
+    console.log(`✅ Media downloaded successfully: ${media.filename || 'unnamed'}, size: ${media.data.length} bytes`);
     res.json({
       success: true,
       mediaUrl: `data:${media.mimetype};base64,${media.data}`,
@@ -950,7 +1079,7 @@ app.post('/download-media', async (req, res) => {
       mediaSize: media.data.length
     });
   } catch (error) {
-    console.error('Error downloading media:', error);
+    console.error('❌ Error downloading media:', error);
     res.status(500).json({ 
       error: 'Failed to download media', 
       details: error.message 
@@ -965,6 +1094,9 @@ app.get('/groups/load', async (req, res) => {
   try {
     console.log('Loading customer groups from Google Sheets...');
     customerGroups = await loadCustomerGroups();
+    
+    console.log('Groups loaded successfully. Total groups:', Object.keys(customerGroups).length);
+    console.log('Loaded group names:', Object.keys(customerGroups));
     
     res.json({
       success: true,
@@ -1096,7 +1228,17 @@ app.post('/groups/:groupName/send', async (req, res) => {
     // Send message to each selected customer
     for (const customer of customersToMessage) {
       try {
-        const chatId = `${customer.phone}@c.us`;
+        // Determine chat ID based on whether it's a group or contact
+        let chatId;
+        if (customer.phone.includes('@g.us') || customer.phone.includes('@c.us')) {
+          // Already has the correct suffix
+          chatId = customer.phone;
+        } else {
+          // Regular contact - add @c.us suffix
+          chatId = `${customer.phone}@c.us`;
+        }
+        
+        console.log(`Getting chat for ID: ${chatId}, isGroup: ${customer.phone.includes('@g.us')}`);
         const chat = await client.getChatById(chatId);
         
         if (hasMedia && mediaUrl && mediaType) {
@@ -1195,7 +1337,7 @@ app.post('/groups/:groupName/send', async (req, res) => {
 app.post('/groups/:groupName/attendance', async (req, res) => {
   try {
     const groupName = req.params.groupName;
-    const { customerPhone, status = 'present', month } = req.body;
+    const { customerPhone, status = 'present', month, message = '', messageTimestamp = null } = req.body;
     
     if (!customerPhone) {
       return res.status(400).json({
@@ -1207,7 +1349,7 @@ app.post('/groups/:groupName/attendance', async (req, res) => {
     // Use provided month or default to current month (YYYY-MM format)
     const targetMonth = month || new Date().toISOString().slice(0, 7);
     
-    const success = await updateAttendance(groupName, customerPhone, status, targetMonth);
+    const success = await updateAttendance(groupName, customerPhone, status, targetMonth, message, messageTimestamp);
     
     if (success) {
       res.json({
@@ -1590,6 +1732,100 @@ function getColumnLetter(index) {
   }
   return result;
 }
+
+// Write attendance record to Attendance sheet
+async function writeAttendanceToSheet(groupName, memberName, memberPhone, message = '', messageTimestamp = null) {
+  try {
+    const sheets = await initializeGoogleSheets();
+    if (!sheets) {
+      console.error('Google Sheets not initialized');
+      return false;
+    }
+
+    // Use message timestamp if provided, otherwise use current time
+    // messageTimestamp is in Unix seconds, convert to milliseconds for Date
+    const timestamp = messageTimestamp ? new Date(messageTimestamp * 1000) : new Date();
+    
+    // Use local time methods instead of toISOString() to avoid UTC conversion
+    const year = timestamp.getFullYear();
+    const month = String(timestamp.getMonth() + 1).padStart(2, '0'); // getMonth() returns 0-11
+    const day = String(timestamp.getDate()).padStart(2, '0');
+    const date = `${year}-${month}-${day}`; // YYYY-MM-DD format in local time
+    const time = timestamp.toTimeString().split(' ')[0]; // HH:MM:SS format (already local time)
+    
+    if (messageTimestamp) {
+      console.log(`[ATTENDANCE] Using message timestamp: ${date} ${time} (from message)`);
+    } else {
+      console.log(`[ATTENDANCE] Using current timestamp: ${date} ${time} (current time)`);
+    }
+
+    // Prepare the row data: Date, Time, Group, Member, Message
+    const rowData = [date, time, groupName, memberName || memberPhone, message || ''];
+
+    // Check if Attendance sheet exists, create if it doesn't
+    try {
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId
+      });
+
+      const sheetNames = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
+      const attendanceSheetExists = sheetNames.includes('Attendance');
+
+      if (!attendanceSheetExists) {
+        // Create the Attendance sheet with headers
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+          resource: {
+            requests: [{
+              addSheet: {
+                properties: {
+                  title: 'Attendance',
+                  gridProperties: {
+                    rowCount: 1000,
+                    columnCount: 5
+                  }
+                }
+              }
+            }]
+          }
+        });
+
+        // Add headers
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+          range: 'Attendance!A1:E1',
+          valueInputOption: 'RAW',
+          resource: {
+            values: [['Date', 'Time', 'Group', 'Member', 'Message']]
+          }
+        });
+
+        console.log('Created Attendance sheet with headers');
+      }
+    } catch (error) {
+      console.error('Error checking/creating Attendance sheet:', error);
+      return false;
+    }
+
+    // Append the row to the Attendance sheet
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+      range: 'Attendance!A:E',
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      resource: {
+        values: [rowData]
+      }
+    });
+
+    console.log(`Attendance record written: ${date} ${time} - ${groupName} - ${memberName}`);
+    return true;
+  } catch (error) {
+    console.error('Error writing attendance to sheet:', error);
+    return false;
+  }
+}
+
 async function initializeGoogleSheets() {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -1623,7 +1859,16 @@ async function loadCustomerGroups() {
 
     const groups = {};
 
+    // Exclude "Master" sheet to prevent accidental mass messaging
+    const excludedSheets = ['Master'];
+
     for (const sheetName of sheetNames) {
+      // Skip excluded sheets
+      if (excludedSheets.includes(sheetName)) {
+        console.log(`Skipping excluded sheet: ${sheetName}`);
+        continue;
+      }
+
       try {
         const response = await sheets.spreadsheets.values.get({
           spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
@@ -1653,8 +1898,32 @@ async function loadCustomerGroups() {
           const phone = row[phoneCol] ? row[phoneCol].toString().trim() : '';
           const name = nameCol !== -1 && row[nameCol] ? row[nameCol].toString().trim() : '';
           
-          // Format phone number
-          let formattedPhone = phone.replace(/\D/g, ''); // Remove non-digits
+          // Check if it's already a group ID or contact ID with @g.us or @c.us
+          if (phone.includes('@g.us') || phone.includes('@c.us')) {
+            // Already in correct format - use as is
+            return {
+              phone: phone,
+              name: name || phone,
+              originalPhone: phone,
+              isGroup: phone.includes('@g.us')
+            };
+          }
+          
+          // Auto-detect group IDs: Numbers 15-20 digits long starting with 120 are group IDs
+          const digitsOnly = phone.replace(/\D/g, ''); // Remove non-digits
+          if (digitsOnly.length >= 15 && digitsOnly.length <= 20 && digitsOnly.startsWith('120')) {
+            // This looks like a group ID - add @g.us suffix
+            console.log(`Auto-detected group ID: ${digitsOnly}`);
+            return {
+              phone: `${digitsOnly}@g.us`,
+              name: name || phone,
+              originalPhone: phone,
+              isGroup: true
+            };
+          }
+          
+          // Format phone number for regular contacts
+          let formattedPhone = digitsOnly;
           if (formattedPhone && !formattedPhone.startsWith('91')) {
             formattedPhone = '91' + formattedPhone;
           }
@@ -1662,9 +1931,10 @@ async function loadCustomerGroups() {
           return {
             phone: formattedPhone,
             name: name || phone,
-            originalPhone: phone
+            originalPhone: phone,
+            isGroup: false
           };
-        }).filter(customer => customer.phone && customer.phone.length >= 10);
+        }).filter(customer => customer.phone && (customer.phone.length >= 10 || customer.phone.includes('@g.us')));
 
         groups[sheetName] = {
           name: sheetName,
@@ -1686,14 +1956,19 @@ async function loadCustomerGroups() {
   }
 }
 
-async function updateAttendance(groupName, customerPhone, status = 'present', month = null) {
+async function updateAttendance(groupName, customerPhone, status = 'present', month = null, message = '', messageTimestamp = null) {
   try {
     const sheets = await initializeGoogleSheets();
     if (!sheets) return false;
 
+    console.log(`[ATTENDANCE] Updating attendance for group: ${groupName}, customer: ${customerPhone}, message: ${message ? message.substring(0, 50) : '(none)'}`);
+
     // Find the customer in the group
     const group = customerGroups[groupName];
-    if (!group) return false;
+    if (!group) {
+      console.log(`[ERROR] Group not found: ${groupName}`);
+      return false;
+    }
 
     console.log(`[DEBUG] Looking for customer with phone: ${customerPhone}`);
     console.log(`[DEBUG] Group has ${group.customers.length} customers`);
@@ -1826,6 +2101,10 @@ async function updateAttendance(groupName, customerPhone, status = 'present', mo
         console.log(`Updated Google Sheet: ${groupName}!${columnLetter}${customerRow} = P`);
         console.log(`Attendance written to Google Sheets for ${customer.name}`);
 
+        // Write to Attendance sheet (Date, Time, Group, Member, Message)
+        // Use message timestamp if provided, otherwise use current time
+        await writeAttendanceToSheet(groupName, customer.name, customer.phone, message, messageTimestamp);
+
       } catch (sheetError) {
         console.error('Error updating Google Sheet:', sheetError);
         // Don't fail the request if sheet update fails
@@ -1947,6 +2226,11 @@ async function updateCustomerAttendance(phoneNumber, status, groupKey, secretCod
 
     console.log(`Updated Google Sheet: ${groupName}!${columnLetter}${customerRow} = Y`);
     console.log(`Secret code confirmation written to Google Sheets for ${customer.name} in column ${codeColumnName}`);
+
+    // Write to Attendance sheet with secret code as message
+    // Use current time for secret code responses (when code was detected)
+    const message = `Secret Code: ${secretCode}`;
+    await writeAttendanceToSheet(groupName, customer.name, customer.phone, message, null);
 
     return true;
   } catch (error) {
