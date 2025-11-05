@@ -106,7 +106,18 @@ let attachedMedia = {};
 // Function to download media for a specific message
 async function downloadMessageMedia(messageId, chatId) {
   try {
-    console.log(`Downloading media for message ${messageId} from chat ${chatId}`);
+    // Validate inputs before sending
+    if (!messageId || !chatId) {
+      console.error('[downloadMessageMedia] Missing parameters:', { messageId, chatId });
+      throw new Error(`Missing required parameters: messageId=${!!messageId}, chatId=${!!chatId}`);
+    }
+    
+    if (!chatId.includes('@c.us') && !chatId.includes('@g.us')) {
+      console.error('[downloadMessageMedia] Invalid chatId format:', chatId);
+      throw new Error(`Invalid chatId format: "${chatId}" (must include @c.us or @g.us)`);
+    }
+    
+    console.log(`[downloadMessageMedia] Downloading media for message ${messageId} from chat ${chatId}`);
     
     const response = await fetch('/download-media', {
       method: 'POST',
@@ -120,7 +131,9 @@ async function downloadMessageMedia(messageId, chatId) {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      console.error('[downloadMessageMedia] Server error:', response.status, errorData);
+      throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error || 'Unknown error'}`);
     }
     
     const data = await response.json();
@@ -145,6 +158,13 @@ async function downloadAndDisplayMedia(messageId, sourcePhone) {
     
     // Format chatId from sourcePhone
     let chatId = sourcePhone;
+    
+    // Validate input
+    if (!sourcePhone || sourcePhone.trim() === '') {
+      console.error('[MEDIA] Invalid sourcePhone:', sourcePhone);
+      showNotification('Error: Invalid source phone number', 'error');
+      return null;
+    }
     
     // Check if sourcePhone contains group format with sender (e.g., "120363341879375384@g.us:919840407490@c.us")
     if (sourcePhone && sourcePhone.includes('@g.us')) {
@@ -172,6 +192,13 @@ async function downloadAndDisplayMedia(messageId, sourcePhone) {
       } else {
         chatId = `${formattedNumber}@c.us`;
       }
+    }
+    
+    // Final validation: ensure chatId has proper format
+    if (!chatId || (!chatId.includes('@c.us') && !chatId.includes('@g.us'))) {
+      console.error(`[MEDIA] Invalid chatId format after processing: ${chatId} (original: ${sourcePhone})`);
+      showNotification('Error: Could not determine chat ID format', 'error');
+      return null;
     }
     
     console.log(`[MEDIA] Downloading from chat: ${chatId} (original sourcePhone: ${sourcePhone})`);
@@ -256,6 +283,13 @@ async function downloadAndDisplayMedia(messageId, sourcePhone) {
 // Function to forward a message with media to customers
 async function forwardMessageWithMedia(messageId, sourcePhone) {
   try {
+    // Validate input
+    if (!sourcePhone || sourcePhone.trim() === '') {
+      console.error('[FORWARD_MEDIA] Invalid sourcePhone:', sourcePhone);
+      showNotification('Error: Invalid source phone number', 'error');
+      return;
+    }
+    
     // Check if we have the media data
     let mediaData = attachedMedia[messageId];
     
@@ -292,6 +326,13 @@ async function forwardMessageWithMedia(messageId, sourcePhone) {
         } else {
           chatId = `${formattedNumber}@c.us`;
         }
+      }
+      
+      // Final validation: ensure chatId has proper format
+      if (!chatId || (!chatId.includes('@c.us') && !chatId.includes('@g.us'))) {
+        console.error(`[FORWARD_MEDIA] Invalid chatId format after processing: ${chatId} (original: ${sourcePhone})`);
+        showNotification('Error: Could not determine chat ID format', 'error');
+        return;
       }
       
       console.log(`[FORWARD_MEDIA] Downloading with chatId: ${chatId} (original: ${sourcePhone})`);
@@ -453,8 +494,25 @@ function setupEventListeners() {
     // Navigation event listeners
     navBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
-            const section = e.target.dataset.section;
-            showSection(section);
+            e.preventDefault(); // Prevent any default behavior
+            e.stopPropagation(); // Stop event bubbling
+            
+            // Use currentTarget (the button itself) to get the section
+            // currentTarget always refers to the element the listener is attached to,
+            // even if clicking on child elements (icon/text) inside
+            const button = e.currentTarget;
+            if (!button) {
+                console.error('Could not find nav button element');
+                return;
+            }
+            
+            const section = button.getAttribute('data-section');
+            if (section) {
+                console.log(`Navigating to section: ${section}`);
+                showSection(section);
+            } else {
+                console.error('No section data found on button:', button);
+            }
         });
     });
     
@@ -608,16 +666,29 @@ socket.on('clientStatus', function(data) {
         qrSection.style.display = 'none';
         phoneSection.style.display = 'block';
         
+        // Clear QR countdown if showing
+        if (qrCountdownInterval) {
+            clearInterval(qrCountdownInterval);
+            qrCountdownInterval = null;
+        }
+        const warningEl = document.getElementById('qrRefreshWarning');
+        if (warningEl) {
+            warningEl.style.display = 'none';
+        }
+        
         if (data.targetPhone) {
             targetPhoneDisplay.textContent = data.targetPhone;
             messagesSection.style.display = 'block';
             loadMessages(data.targetPhone);
         }
     } else {
-        updateStatus('connecting', 'Connecting to WhatsApp...');
-        qrSection.style.display = 'block';
-        phoneSection.style.display = 'none';
-        messagesSection.style.display = 'none';
+        // Only show connecting state if we don't have a QR code yet
+        // If QR code exists, it means we're waiting for authentication
+        if (!qrCodeData) {
+            updateStatus('connecting', 'Connecting to WhatsApp...');
+        }
+        // Don't force show QR section here - let qrCode event handle it
+        // This prevents flickering when client temporarily disconnects
     }
 });
 
@@ -626,11 +697,21 @@ let qrCountdownInterval = null;
 socket.on('qrCode', function(data) {
     console.log('📱 QR Code received');
     qrCodeData = data.qrImage; // Store QR code data
-    displayQRCode(data.qrImage);
-    updateStatus('connecting', 'Scan QR Code to connect');
-    qrSection.style.display = 'block';
-    phoneSection.style.display = 'none';
-    messagesSection.style.display = 'none';
+    
+    // Only show QR code if client is not already connected
+    // This prevents showing QR when client temporarily disconnects but has valid session
+    if (!isConnected) {
+        console.log('⚠️ Client not connected, showing QR code');
+        displayQRCode(data.qrImage);
+        updateStatus('connecting', 'Scan QR Code to connect');
+        qrSection.style.display = 'block';
+        phoneSection.style.display = 'none';
+        messagesSection.style.display = 'none';
+    } else {
+        console.log('✅ Client already connected, ignoring QR code');
+        // Client is connected, don't show QR code
+        return;
+    }
     
     // Show countdown warning
     const warningEl = document.getElementById('qrRefreshWarning');
@@ -702,16 +783,22 @@ socket.on('clientDisconnected', function(data) {
     const reason = data.reason || 'Connection lost';
     const requiresReconnect = data.requiresReconnect || false;
     
+    // Update connection status
+    isConnected = false;
+    
     if (requiresReconnect) {
         updateStatus('disconnected', 'Session Closed - Please Reconnect');
         showError('WhatsApp session has been closed. Please refresh the page and scan the QR code again to reconnect.');
+        qrSection.style.display = 'block';
+        phoneSection.style.display = 'none';
+        messagesSection.style.display = 'none';
     } else {
+        // Temporary disconnect - wait a bit to see if client auto-reconnects
         updateStatus('connecting', 'Reconnecting...');
+        // Don't show QR immediately - wait to see if session is still valid
+        // QR will be shown if clientStatus event shows isReady: false
+        console.log('⏳ Waiting for auto-reconnection...');
     }
-    
-    qrSection.style.display = 'block';
-    phoneSection.style.display = 'none';
-    messagesSection.style.display = 'none';
 });
 
 socket.on('newMessage', function(messageData) {
@@ -1232,7 +1319,7 @@ function addMessageToContainer(message) {
                 <button onclick="copyMediaLink('${message.mediaUrl}')" class="copy-btn">
                     <i class="fas fa-copy"></i> Copy Link
                 </button>
-                <button onclick="forwardMessageWithMedia('${message.id}', '${message.from && message.from.includes('@g.us') ? message.from : (message.sourcePhone || message.from)}')" class="forward-btn">
+                <button onclick="forwardMessageWithMedia('${message.id}', '${message.sourcePhone || message.from || ''}')" class="forward-btn">
                     <i class="fas fa-share"></i> Forward to Customers
                 </button>
             </div>`;
@@ -1242,7 +1329,7 @@ function addMessageToContainer(message) {
                 <div class="media-placeholder">
                     <i class="fas fa-file"></i>
                     <div class="media-info">📎 ${message.mediaNote}</div>
-                    <button onclick="downloadAndDisplayMedia('${message.id}', '${message.from && message.from.includes('@g.us') ? message.from : (message.sourcePhone || message.from)}')" class="download-media-btn">
+                    <button onclick="downloadAndDisplayMedia('${message.id}', '${message.sourcePhone || message.from || ''}')" class="download-media-btn">
                         <i class="fas fa-download"></i> Download Media
                     </button>
                 </div>
@@ -2932,14 +3019,20 @@ async function executeForward(messageId, button) {
             mediaType = attached.mediaMimetype;
             mediaFilename = attached.mediaFilename;
         } else {
-            // Need to download the media first
+                // Need to download the media first
             showNotification('Downloading media for forwarding...', 'info');
             try {
                 // Format chatId properly - handle group IDs
-                let chatId = message.sourcePhone || message.from;
+                let chatId = message.sourcePhone || message.from || '';
+                
+                // Validate input
+                if (!chatId || chatId.trim() === '') {
+                    console.error('[FORWARD] Invalid chatId:', { sourcePhone: message.sourcePhone, from: message.from });
+                    throw new Error('Invalid chat ID: source phone or from field is missing');
+                }
                 
                 // If sourcePhone doesn't have @ suffix, we need to determine if it's a group
-                if (chatId && !chatId.includes('@g.us') && !chatId.includes('@c.us')) {
+                if (!chatId.includes('@g.us') && !chatId.includes('@c.us')) {
                     // Check if message.from has group info (format: groupId@senderId)
                     if (message.from && message.from.includes('@g.us')) {
                         // Extract group ID from format like "120363341879375384@g.us:919840407490@c.us"
@@ -2957,15 +3050,25 @@ async function executeForward(messageId, button) {
                         }
                     } else {
                         // Regular contact - format as @c.us
-                        const formattedNumber = chatId.replace(/\D/g, '');
+                        let formattedNumber = chatId;
+                        if (chatId.startsWith('+')) {
+                            formattedNumber = chatId.substring(1);
+                        }
+                        formattedNumber = formattedNumber.replace(/\D/g, '');
                         chatId = `${formattedNumber}@c.us`;
                     }
-                } else if (message.from && message.from.includes('@g.us') && !chatId.includes('@g.us')) {
-                    // Extract group ID from message.from if chatId doesn't have it
-                    const groupMatch = message.from.match(/^([^:]+@g\.us)/);
+                } else if (chatId.includes('@g.us')) {
+                    // Extract group ID if it contains sender info (format: groupId@senderId)
+                    const groupMatch = chatId.match(/^([^:]+@g\.us)/);
                     if (groupMatch) {
                         chatId = groupMatch[1];
                     }
+                }
+                
+                // Final validation: ensure chatId has proper format
+                if (!chatId || (!chatId.includes('@c.us') && !chatId.includes('@g.us'))) {
+                    console.error(`[FORWARD] Invalid chatId format after processing: ${chatId} (original: ${message.sourcePhone || message.from})`);
+                    throw new Error('Could not determine chat ID format');
                 }
                 
                 console.log(`[FORWARD] Downloading media with chatId: ${chatId} (from: ${message.from}, sourcePhone: ${message.sourcePhone})`);
@@ -3369,11 +3472,17 @@ function applyTimePreset(preset) {
             toDateTime.setHours(23, 59, 59, 999);
             break;
             
-        case 'last30days':
-            fromDateTime = new Date(now);
-            fromDateTime.setDate(now.getDate() - 30);
+        case 'lastmonth':
+            // Calculate last month: from first day of last month to last day of last month
+            const lastMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1; // Handle January (month 0)
+            const lastMonthYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+            
+            // First day of last month
+            fromDateTime = new Date(lastMonthYear, lastMonth, 1);
             fromDateTime.setHours(0, 0, 0, 0);
-            toDateTime = new Date(now);
+            
+            // Last day of last month
+            toDateTime = new Date(lastMonthYear, lastMonth + 1, 0); // Day 0 of current month = last day of previous month
             toDateTime.setHours(23, 59, 59, 999);
             break;
             

@@ -67,8 +67,15 @@ client.on('qr', (qr) => {
       return;
     }
     
-    // Emit QR code to all connected clients
-    io.emit('qrCode', { qrData: qr, qrImage: url });
+    console.log('📱 QR Code generated - client needs authentication');
+    // Only emit QR code if client is not ready
+    // This prevents showing QR during temporary disconnects when session is still valid
+    if (!isClientReady) {
+      console.log('📤 Emitting QR code to clients (client not ready)');
+      io.emit('qrCode', { qrData: qr, qrImage: url });
+    } else {
+      console.log('⚠️ QR code generated but client is ready - not emitting (likely temporary)');
+    }
   });
 });
 
@@ -90,7 +97,22 @@ client.on('auth_failure', (msg) => {
 client.on('disconnected', (reason) => {
   console.log('WhatsApp client disconnected:', reason);
   isClientReady = false;
-  io.emit('clientDisconnected', { reason });
+  
+  // Determine if this is a permanent session closure or temporary disconnect
+  const requiresReconnect = reason === 'LOGOUT' || reason === 'NAVIGATION' || reason?.includes('Session closed');
+  
+  io.emit('clientDisconnected', { 
+    reason: reason || 'Connection lost',
+    requiresReconnect: requiresReconnect 
+  });
+  
+  // If it's a temporary disconnect, the client will try to auto-reconnect
+  // Don't clear the session immediately - let LocalAuth handle reconnection
+  if (requiresReconnect) {
+    console.log('⚠️ Session requires re-authentication');
+  } else {
+    console.log('⏳ Temporary disconnect - waiting for auto-reconnection...');
+  }
 });
 
 // Listen for messages
@@ -939,79 +961,163 @@ app.get('/chats', async (req, res) => {
 
 // Endpoint to download media for a specific message
 app.post('/download-media', async (req, res) => {
-  console.log('📥 Download media request received:', req.body);
+  console.log('\n' + '='.repeat(80));
+  console.log('📥 [MEDIA DOWNLOAD] Request received at:', new Date().toISOString());
+  console.log('📥 [MEDIA DOWNLOAD] Request body:', JSON.stringify(req.body, null, 2));
+  console.log('='.repeat(80));
   
   if (!isClientReady) {
-    console.error('❌ WhatsApp client not ready');
+    console.error('❌ [MEDIA DOWNLOAD] WhatsApp client not ready');
     return res.status(400).json({ error: 'WhatsApp client not ready' });
   }
   
   const { messageId, chatId } = req.body;
   
+  console.log('🔍 [MEDIA DOWNLOAD] Extracted parameters:', {
+    messageId: messageId || 'MISSING',
+    chatId: chatId || 'MISSING',
+    messageIdType: typeof messageId,
+    chatIdType: typeof chatId,
+    messageIdLength: messageId?.length || 0,
+    chatIdLength: chatId?.length || 0
+  });
+  
   if (!messageId || !chatId) {
-    console.error('❌ Missing required parameters:', { messageId: !!messageId, chatId: !!chatId });
-    return res.status(400).json({ error: 'Message ID and Chat ID are required' });
+    console.error('❌ [MEDIA DOWNLOAD] Missing required parameters');
+    return res.status(400).json({ 
+      error: 'Message ID and Chat ID are required',
+      received: { messageId: !!messageId, chatId: !!chatId }
+    });
   }
   
   try {
-    console.log(`📥 Downloading media for message ${messageId} from chat ${chatId}`);
+    console.log(`\n🔍 [MEDIA DOWNLOAD] Starting download process`);
+    console.log(`   Message ID: ${messageId}`);
+    console.log(`   Chat ID: ${chatId}`);
     
     // Validate chatId format
     if (!chatId || (!chatId.includes('@c.us') && !chatId.includes('@g.us'))) {
-      console.error(`❌ Invalid chatId format: ${chatId}`);
-      return res.status(400).json({ error: 'Invalid chat ID format', chatId: chatId });
+      console.error(`❌ [MEDIA DOWNLOAD] Invalid chatId format: "${chatId}"`);
+      return res.status(400).json({ 
+        error: 'Invalid chat ID format. Must include @c.us or @g.us',
+        received: chatId,
+        chatIdType: typeof chatId
+      });
     }
     
+    console.log(`🔍 [MEDIA DOWNLOAD] Fetching chat: ${chatId}`);
     const chat = await client.getChatById(chatId);
     if (!chat) {
-      console.error(`❌ Chat not found: ${chatId}`);
+      console.error(`❌ [MEDIA DOWNLOAD] Chat not found: ${chatId}`);
       return res.status(404).json({ error: 'Chat not found', chatId: chatId });
     }
-    console.log(`✅ Chat found: ${chat.name || chatId}`);
+    console.log(`✅ [MEDIA DOWNLOAD] Chat found: ${chat.name || chatId} (ID: ${chat.id._serialized || 'N/A'})`);
     
+    console.log(`🔍 [MEDIA DOWNLOAD] Fetching messages (limit: 100)...`);
     const messages = await chat.fetchMessages({ limit: 100 });
-    console.log(`✅ Fetched ${messages.length} messages to search`);
+    console.log(`✅ [MEDIA DOWNLOAD] Fetched ${messages.length} messages to search`);
+    
+    // Log sample of first few messages for debugging
+    if (messages.length > 0) {
+      console.log(`\n📋 [MEDIA DOWNLOAD] Sample messages (first 5):`);
+      messages.slice(0, 5).forEach((msg, idx) => {
+        console.log(`   [${idx + 1}] ID: ${msg.id._serialized}, Type: ${msg.type}, hasMedia: ${msg.hasMedia}, fromMe: ${msg.fromMe}, from: ${msg.from}, timestamp: ${msg.timestamp}`);
+      });
+    }
     
     // Try to find message by _serialized ID first, then by various custom formats
-    let message = messages.find(msg => {
+    console.log(`\n🔍 [MEDIA DOWNLOAD] Searching for message with ID: ${messageId}`);
+    console.log(`   Message ID parts: ${messageId.split('_').join(' | ')}`);
+    
+    let message = null;
+    let matchMethod = null;
+    
+    for (let idx = 0; idx < messages.length; idx++) {
+      const msg = messages[idx];
       const serializedId = msg.id?._serialized;
       
       // Try exact match first
-      if (serializedId === messageId) return true;
+      if (serializedId === messageId) {
+        matchMethod = 'exact_match';
+        message = msg;
+        console.log(`✅ [MEDIA DOWNLOAD] Exact match found at index ${idx} by serialized ID: ${serializedId}`);
+        break;
+      }
       
       // Try matching just the serialized part if messageId contains it
-      if (serializedId && messageId.includes(serializedId)) return true;
+      if (serializedId && messageId.includes(serializedId)) {
+        matchMethod = 'substring_match';
+        message = msg;
+        console.log(`✅ [MEDIA DOWNLOAD] Substring match found at index ${idx}: ${serializedId} in ${messageId}`);
+        break;
+      }
       
       // Try custom formats
       const customId1 = `${msg.fromMe}_${msg.from}_${serializedId || msg.timestamp}`;
-      if (customId1 === messageId) return true;
+      if (customId1 === messageId) {
+        matchMethod = 'custom_format_1';
+        message = msg;
+        console.log(`✅ [MEDIA DOWNLOAD] Custom format 1 match found at index ${idx}: ${customId1}`);
+        break;
+      }
       
       // Try format: fromMe_from_serializedId_timestamp@lid
       if (serializedId) {
         const customId2 = `${msg.fromMe}_${msg.from}_${serializedId}_${msg.timestamp}@lid`;
-        if (customId2 === messageId) return true;
+        if (customId2 === messageId) {
+          matchMethod = 'custom_format_2';
+          message = msg;
+          console.log(`✅ [MEDIA DOWNLOAD] Custom format 2 match found at index ${idx}: ${customId2}`);
+          break;
+        }
         
-        // Try matching parts of the ID
+        // Try matching parts of the ID with timestamp validation
         const messageIdParts = messageId.split('_');
-        if (messageIdParts.length >= 2) {
+        if (messageIdParts.length >= 3) {
           const fromMeMatch = messageIdParts[0] === String(msg.fromMe);
           const fromMatch = messageIdParts[1] && msg.from.includes(messageIdParts[1].replace(/@.*/, ''));
-          const serializedMatch = messageIdParts.some(part => part === serializedId || serializedId.includes(part.replace(/@.*/, '')));
+          const serializedMatch = messageIdParts.some(part => {
+            const cleanPart = part.replace(/@.*/, '');
+            return part === serializedId || serializedId.includes(cleanPart) || cleanPart === serializedId;
+          });
           
-          if (fromMeMatch && fromMatch && serializedMatch) {
-            console.log(`✅ Matched message by parts: fromMe=${fromMeMatch}, from=${fromMatch}, serialized=${serializedMatch}`);
-            return true;
+          // Also check timestamp if present in messageId
+          const timestampMatch = messageIdParts.some(part => {
+            const cleanPart = part.replace(/@.*/, '');
+            return cleanPart === String(msg.timestamp);
+          });
+          
+          if (fromMeMatch && fromMatch && serializedMatch && (timestampMatch || messageIdParts.length === 3)) {
+            matchMethod = 'parts_match';
+            message = msg;
+            console.log(`✅ [MEDIA DOWNLOAD] Parts match found at index ${idx}`);
+            console.log(`   Match details: fromMe=${fromMeMatch}, from=${fromMatch}, serialized=${serializedMatch}, timestamp=${timestampMatch}`);
+            break;
           }
         }
       }
-      
-      return false;
-    });
+    }
+    
+    if (message) {
+      console.log(`\n✅ [MEDIA DOWNLOAD] Message found!`);
+      console.log(`   Match method: ${matchMethod}`);
+      console.log(`   Serialized ID: ${message.id._serialized}`);
+      console.log(`   Type: ${message.type}`);
+      console.log(`   hasMedia: ${message.hasMedia}`);
+      console.log(`   fromMe: ${message.fromMe}`);
+      console.log(`   from: ${message.from}`);
+      console.log(`   timestamp: ${message.timestamp}`);
+      console.log(`   body preview: ${message.body?.substring(0, 100) || 'N/A'}`);
+      console.log(`   All message properties:`, Object.keys(message));
+    } else {
+      console.log(`\n⚠️ [MEDIA DOWNLOAD] Message not found in first 100 messages`);
+    }
     
     if (!message) {
-      console.error(`❌ Message not found in first 100: ${messageId}`);
+      console.log(`\n🔍 [MEDIA DOWNLOAD] Message not found in first 100, trying extended search (limit: 500)...`);
       // Try fetching more messages if not found in first 100
       const moreMessages = await chat.fetchMessages({ limit: 500 });
+      console.log(`✅ [MEDIA DOWNLOAD] Fetched ${moreMessages.length} messages in extended search`);
       const message2 = moreMessages.find(msg => {
         const serializedId = msg.id?._serialized;
         
@@ -1038,52 +1144,451 @@ app.post('/download-media', async (req, res) => {
         return false;
       });
       if (message2) {
-        console.log(`✅ Message found in extended search`);
-        if (!message2.hasMedia) {
-          return res.status(400).json({ error: 'Message does not contain media' });
+        console.log(`\n✅ [MEDIA DOWNLOAD] Message found in extended search!`);
+        console.log(`   Serialized ID: ${message2.id._serialized}`);
+        console.log(`   Type: ${message2.type}`);
+        console.log(`   hasMedia: ${message2.hasMedia}`);
+        console.log(`   fromMe: ${message2.fromMe}`);
+        console.log(`   from: ${message2.from}`);
+        console.log(`   timestamp: ${message2.timestamp}`);
+        console.log(`   body preview: ${message2.body?.substring(0, 100) || 'N/A'}`);
+        
+        // Check if message has media - try multiple indicators
+        const hasMediaIndicator2 = message2.hasMedia || 
+                                   message2.type === 'image' || 
+                                   message2.type === 'video' || 
+                                   message2.type === 'audio' || 
+                                   message2.type === 'document' || 
+                                   message2.type === 'sticker' ||
+                                   message2.type === 'ptt' ||
+                                   message2.type === 'ptv' ||
+                                   (message2.body && message2.body.includes('media'));
+        
+        console.log(`\n🔍 [MEDIA DOWNLOAD] Media indicator check:`);
+        console.log(`   hasMedia: ${message2.hasMedia}`);
+        console.log(`   type check: ${['image', 'video', 'audio', 'document', 'sticker', 'ptt', 'ptv'].includes(message2.type)} (type: ${message2.type})`);
+        console.log(`   body contains 'media': ${message2.body?.includes('media') || false}`);
+        console.log(`   Overall hasMediaIndicator: ${hasMediaIndicator2}`);
+        
+        // If no indicators suggest media, but user is requesting download, try anyway
+        if (!hasMediaIndicator2) {
+          console.warn(`\n⚠️ [MEDIA DOWNLOAD] No media indicators found, but attempting download anyway`);
+          console.warn(`   Type: ${message2.type}, hasMedia: ${message2.hasMedia}`);
+        } else {
+          console.log(`\n📥 [MEDIA DOWNLOAD] Media indicators found, proceeding with download...`);
         }
-        const media = await message2.downloadMedia();
-        if (!media) {
-          return res.status(500).json({ error: 'Failed to download media' });
+        
+        let media2;
+        try {
+          console.log(`\n📥 [MEDIA DOWNLOAD] Attempting to download media (extended search)...`);
+          console.log(`   Message type: ${message2.type}`);
+          console.log(`   Is video: ${message2.type === 'video' || message2.type === 'ptv'}`);
+          
+          const downloadStartTime = Date.now();
+          
+          // For videos, add more detailed logging and potentially increase timeout
+          if (message2.type === 'video' || message2.type === 'ptv') {
+            console.log(`   📹 Video message detected - this may take longer to download`);
+            console.log(`   Video properties:`, {
+              hasMedia: message2.hasMedia,
+              type: message2.type,
+              body: message2.body?.substring(0, 100) || 'N/A'
+            });
+          }
+          
+          // Download with longer timeout for videos
+          // For videos, try multiple times with exponential backoff
+          let retries2 = message2.type === 'video' || message2.type === 'ptv' ? 2 : 1;
+          let lastError2 = null;
+          
+          for (let attempt = 1; attempt <= retries2; attempt++) {
+            try {
+              if (attempt > 1) {
+                console.log(`   🔄 Retry attempt ${attempt}/${retries2} for video download (extended search)...`);
+                await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Exponential backoff
+              }
+              
+              const downloadPromise2 = message2.downloadMedia();
+              const timeoutPromise2 = new Promise((_, reject) => {
+                const timeout = message2.type === 'video' || message2.type === 'ptv' ? 90000 : 30000; // 90s for video, 30s for others
+                setTimeout(() => reject(new Error(`Download timeout after ${timeout}ms`)), timeout);
+              });
+              
+              media2 = await Promise.race([downloadPromise2, timeoutPromise2]);
+              const downloadDuration = Date.now() - downloadStartTime;
+              
+              // Check if media is null or invalid
+              if (!media2 || !media2.data) {
+                console.error(`   ⚠️ [MEDIA DOWNLOAD] Attempt ${attempt} returned null/empty media (extended search)`);
+                console.error(`   Media object:`, media2 ? 'exists but no data' : 'null');
+                
+                if (attempt === retries2) {
+                  // Last attempt, throw error
+                  throw new Error('Media download returned null - media may be expired or unavailable');
+                }
+                // Otherwise, continue to next retry
+                continue;
+              }
+              
+              console.log(`✅ [MEDIA DOWNLOAD] Media downloaded successfully in ${downloadDuration}ms (attempt ${attempt})`);
+              console.log(`   Media data length: ${media2.data.length} bytes`);
+              break; // Success, exit retry loop
+            } catch (attemptError) {
+              lastError2 = attemptError;
+              console.error(`   ⚠️ [MEDIA DOWNLOAD] Attempt ${attempt} failed (extended search): ${attemptError.message}`);
+              
+              if (attempt === retries2) {
+                // Last attempt failed, throw the error
+                throw attemptError;
+              }
+              // Otherwise, continue to next retry
+            }
+          }
+        } catch (downloadError) {
+          console.error(`\n❌ [MEDIA DOWNLOAD] Error downloading media after all attempts (extended search):`);
+          console.error(`   Error message: ${downloadError.message}`);
+          console.error(`   Error stack: ${downloadError.stack}`);
+          console.error(`   Error name: ${downloadError.name}`);
+          console.error(`   Message type: ${message2.type}`);
+          console.error(`   hasMedia: ${message2.hasMedia}`);
+          console.error(`   Message ID: ${message2.id?._serialized || 'N/A'}`);
+          
+          // Check if it's a "no media" error or a real download error
+          const isNoMediaError = downloadError.message?.includes('no media') || 
+                                 downloadError.message?.includes('Media not found') ||
+                                 downloadError.message?.includes('does not contain media');
+          
+          if (isNoMediaError || (!message2.hasMedia && !hasMediaIndicator2)) {
+            return res.status(400).json({ 
+              error: 'Message does not contain media',
+              messageType: message2.type,
+              hasMedia: message2.hasMedia,
+              downloadError: downloadError.message
+            });
+          }
+          
+          // Real download error
+          return res.status(500).json({ 
+            error: 'Failed to download media',
+            details: downloadError.message,
+            messageType: message2.type,
+            hasMedia: message2.hasMedia
+          });
         }
-        return res.json({
-          success: true,
-          mediaUrl: `data:${media.mimetype};base64,${media.data}`,
-          mediaFilename: media.filename || `media_${messageId}`,
-          mediaMimetype: media.mimetype,
-          mediaSize: media.data.length
-        });
+        
+        if (!media2) {
+          console.error(`❌ Failed to download media (returned null): ${messageId}`);
+          return res.status(500).json({ 
+            error: 'Failed to download media',
+            messageType: message2.type,
+            hasMedia: message2.hasMedia
+          });
+        }
+        
+        console.log(`\n✅ [MEDIA DOWNLOAD] Media downloaded successfully from extended search!`);
+        console.log(`   Filename: ${media2.filename || 'unnamed'}`);
+        console.log(`   Mimetype: ${media2.mimetype}`);
+        console.log(`   Size: ${media2.data.length} bytes (${(media2.data.length / 1024).toFixed(2)} KB)`);
+        console.log(`   Size in MB: ${(media2.data.length / (1024 * 1024)).toFixed(2)} MB`);
+        
+        // Check if it's a video and log additional info
+        if (media2.mimetype?.startsWith('video/')) {
+          console.log(`   📹 Video file detected - size: ${(media2.data.length / (1024 * 1024)).toFixed(2)} MB`);
+        }
+        
+        // Check file size - warn if very large
+        const sizeInMB2 = media2.data.length / (1024 * 1024);
+        if (sizeInMB2 > 20) {
+          console.warn(`   ⚠️ Large file detected (${sizeInMB2.toFixed(2)} MB) - may cause issues`);
+        }
+        
+        try {
+          const response2 = {
+            success: true,
+            mediaUrl: `data:${media2.mimetype};base64,${media2.data}`,
+            mediaFilename: media2.filename || `media_${messageId}`,
+            mediaMimetype: media2.mimetype,
+            mediaSize: media2.data.length
+          };
+          
+          // Calculate response size
+          const responseSize2 = JSON.stringify(response2).length;
+          const responseSizeMB2 = responseSize2 / (1024 * 1024);
+          
+          console.log(`   Response size: ${responseSize2} bytes (${responseSizeMB2.toFixed(2)} MB)`);
+          
+          if (responseSizeMB2 > 50) {
+            console.error(`   ❌ Response size (${responseSizeMB2.toFixed(2)} MB) exceeds safe limit`);
+            return res.status(500).json({ 
+              error: 'Media file too large to send',
+              details: `File size (${sizeInMB2.toFixed(2)} MB) exceeds response limit`,
+              mediaSize: media2.data.length,
+              responseSize: responseSize2
+            });
+          }
+          
+          return res.json(response2);
+        } catch (responseError2) {
+          console.error(`\n❌ [MEDIA DOWNLOAD] Error sending response (extended search):`);
+          console.error(`   Error message: ${responseError2.message}`);
+          console.error(`   Error stack: ${responseError2.stack}`);
+          console.error(`   Media size: ${media2.data.length} bytes (${sizeInMB2.toFixed(2)} MB)`);
+          
+          return res.status(500).json({ 
+            error: 'Failed to send media response',
+            details: responseError2.message,
+            mediaSize: media2.data.length,
+            errorType: responseError2.name
+          });
+        }
       }
       return res.status(404).json({ error: 'Message not found' });
     }
     
-    if (!message.hasMedia) {
-      console.error(`❌ Message does not contain media: ${messageId}`);
-      return res.status(400).json({ error: 'Message does not contain media' });
+    // Check if message has media - try multiple indicators
+    console.log(`\n🔍 [MEDIA DOWNLOAD] Checking media indicators for found message:`);
+    const hasMediaIndicator = message.hasMedia || 
+                              message.type === 'image' || 
+                              message.type === 'video' || 
+                              message.type === 'audio' || 
+                              message.type === 'document' || 
+                              message.type === 'sticker' ||
+                              message.type === 'ptt' ||
+                              message.type === 'ptv' ||
+                              (message.body && message.body.includes('media'));
+    
+    console.log(`   hasMedia flag: ${message.hasMedia}`);
+    console.log(`   type check: ${['image', 'video', 'audio', 'document', 'sticker', 'ptt', 'ptv'].includes(message.type)} (type: ${message.type})`);
+    console.log(`   body contains 'media': ${message.body?.includes('media') || false}`);
+    console.log(`   Overall hasMediaIndicator: ${hasMediaIndicator}`);
+    
+    // If no indicators suggest media, but user is requesting download, try anyway
+    // (might be a forwarded message or the hasMedia flag is incorrect)
+    if (!hasMediaIndicator) {
+      console.warn(`\n⚠️ [MEDIA DOWNLOAD] No media indicators found, but attempting download anyway`);
+      console.warn(`   Type: ${message.type}, hasMedia: ${message.hasMedia}`);
+    } else {
+      console.log(`\n📥 [MEDIA DOWNLOAD] Media indicators found, proceeding with download...`);
     }
     
-    console.log(`📥 Downloading media from message...`);
-    const media = await message.downloadMedia();
-    
-    if (!media) {
-      console.error(`❌ Failed to download media: ${messageId}`);
-      return res.status(500).json({ error: 'Failed to download media' });
+    // Try to download media - even if hasMedia is false, the message might still have media
+    let media;
+    try {
+      console.log(`\n📥 [MEDIA DOWNLOAD] Attempting to download media...`);
+      console.log(`   Message type: ${message.type}`);
+      console.log(`   Is video: ${message.type === 'video' || message.type === 'ptv'}`);
+      
+      const downloadStartTime = Date.now();
+      
+      // For videos, add more detailed logging and potentially increase timeout
+      if (message.type === 'video' || message.type === 'ptv') {
+        console.log(`   📹 Video message detected - this may take longer to download`);
+        console.log(`   Video properties:`, {
+          hasMedia: message.hasMedia,
+          type: message.type,
+          body: message.body?.substring(0, 100) || 'N/A'
+        });
+      }
+      
+      // Download with longer timeout for videos
+      // For videos, try multiple times with exponential backoff
+      let retries = message.type === 'video' || message.type === 'ptv' ? 2 : 1;
+      let lastError = null;
+      
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          if (attempt > 1) {
+            console.log(`   🔄 Retry attempt ${attempt}/${retries} for video download...`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Exponential backoff
+          }
+          
+          const downloadPromise = message.downloadMedia();
+          const timeoutPromise = new Promise((_, reject) => {
+            const timeout = message.type === 'video' || message.type === 'ptv' ? 90000 : 30000; // 90s for video, 30s for others
+            setTimeout(() => reject(new Error(`Download timeout after ${timeout}ms`)), timeout);
+          });
+          
+          media = await Promise.race([downloadPromise, timeoutPromise]);
+          const downloadDuration = Date.now() - downloadStartTime;
+          
+          // Check if media is null or invalid
+          if (!media || !media.data) {
+            console.error(`   ⚠️ [MEDIA DOWNLOAD] Attempt ${attempt} returned null/empty media`);
+            console.error(`   Media object:`, media ? 'exists but no data' : 'null');
+            
+            if (attempt === retries) {
+              // Last attempt, throw error
+              throw new Error('Media download returned null - media may be expired or unavailable');
+            }
+            // Otherwise, continue to next retry
+            continue;
+          }
+          
+          console.log(`✅ [MEDIA DOWNLOAD] Media downloaded successfully in ${downloadDuration}ms (attempt ${attempt})`);
+          console.log(`   Media data length: ${media.data.length} bytes`);
+          break; // Success, exit retry loop
+        } catch (attemptError) {
+          lastError = attemptError;
+          console.error(`   ⚠️ [MEDIA DOWNLOAD] Attempt ${attempt} failed: ${attemptError.message}`);
+          
+          if (attempt === retries) {
+            // Last attempt failed, throw the error
+            throw attemptError;
+          }
+          // Otherwise, continue to next retry
+        }
+      }
+    } catch (downloadError) {
+      console.error(`\n❌ [MEDIA DOWNLOAD] Error downloading media after all attempts:`);
+      console.error(`   Error message: ${downloadError.message}`);
+      console.error(`   Error stack: ${downloadError.stack}`);
+      console.error(`   Error name: ${downloadError.name}`);
+      console.error(`   Message type: ${message.type}`);
+      console.error(`   hasMedia: ${message.hasMedia}`);
+      console.error(`   Message ID: ${message.id?._serialized || 'N/A'}`);
+      
+      // Check if it's a "no media" error or a real download error
+      const isNoMediaError = downloadError.message?.includes('no media') || 
+                             downloadError.message?.includes('Media not found') ||
+                             downloadError.message?.includes('does not contain media') ||
+                             downloadError.message?.includes('Media expired');
+      
+      if (isNoMediaError || (!message.hasMedia && !hasMediaIndicator)) {
+        return res.status(400).json({ 
+          error: 'Message does not contain media',
+          messageType: message.type,
+          hasMedia: message.hasMedia,
+          downloadError: downloadError.message
+        });
+      }
+      
+      // Real download error - provide more details
+      console.error(`\n❌ [MEDIA DOWNLOAD] Returning 500 error response`);
+      console.error(`   Error details: ${downloadError.message}`);
+      console.error(`   Error type: ${downloadError.name}`);
+      console.error(`   Message type: ${message.type}`);
+      console.error(`   Has media: ${message.hasMedia}`);
+      console.error(`   Retries attempted: ${retries}`);
+      
+      const errorResponse = { 
+        error: 'Failed to download media',
+        details: downloadError.message || 'Unknown error',
+        messageType: message.type,
+        hasMedia: message.hasMedia,
+        errorType: downloadError.name || 'Error',
+        retriesAttempted: retries
+      };
+      
+      console.error(`   Error response:`, JSON.stringify(errorResponse, null, 2));
+      console.log('='.repeat(80) + '\n');
+      
+      return res.status(500).json(errorResponse);
     }
     
-    console.log(`✅ Media downloaded successfully: ${media.filename || 'unnamed'}, size: ${media.data.length} bytes`);
-    res.json({
-      success: true,
-      mediaUrl: `data:${media.mimetype};base64,${media.data}`,
-      mediaFilename: media.filename || `media_${messageId}`,
-      mediaMimetype: media.mimetype,
-      mediaSize: media.data.length
-    });
+    // Final safety check - this should not happen if retry logic works correctly
+    if (!media || !media.data) {
+      console.error(`❌ [MEDIA DOWNLOAD] Failed to download media (returned null after all retries): ${messageId}`);
+      console.error(`   Message type: ${message.type}`);
+      console.error(`   Has media: ${message.hasMedia}`);
+      console.error(`   Message ID: ${message.id?._serialized || 'N/A'}`);
+      console.error(`   Media object:`, media ? 'exists but no data property' : 'null');
+      console.error(`   ⚠️ This usually means the media has expired or been deleted from WhatsApp servers`);
+      console.error(`   ⚠️ Videos older than a few days often become unavailable`);
+      console.log('='.repeat(80) + '\n');
+      
+      return res.status(500).json({ 
+        error: 'Failed to download media',
+        details: 'Media download returned null - media may be expired, deleted, or unavailable. This often happens with videos that are too old or have been deleted from WhatsApp servers.',
+        messageType: message.type,
+        hasMedia: message.hasMedia,
+        suggestion: 'Try downloading the media from WhatsApp directly, or ask the sender to resend it if possible.'
+      });
+    }
+    
+    console.log(`\n✅ [MEDIA DOWNLOAD] Media download successful!`);
+    console.log(`   Filename: ${media.filename || 'unnamed'}`);
+    console.log(`   Mimetype: ${media.mimetype}`);
+    console.log(`   Size: ${media.data.length} bytes (${(media.data.length / 1024).toFixed(2)} KB)`);
+    console.log(`   Size in MB: ${(media.data.length / (1024 * 1024)).toFixed(2)} MB`);
+    
+    // Check if it's a video and log additional info
+    if (media.mimetype?.startsWith('video/')) {
+      console.log(`   📹 Video file detected - size: ${(media.data.length / (1024 * 1024)).toFixed(2)} MB`);
+    }
+    
+    // Check file size - warn if very large
+    const sizeInMB = media.data.length / (1024 * 1024);
+    if (sizeInMB > 20) {
+      console.warn(`   ⚠️ Large file detected (${sizeInMB.toFixed(2)} MB) - may cause issues`);
+    }
+    
+    console.log(`   Base64 data preview: ${media.data.substring(0, 100)}... (truncated)`);
+    
+    try {
+      const response = {
+        success: true,
+        mediaUrl: `data:${media.mimetype};base64,${media.data}`,
+        mediaFilename: media.filename || `media_${messageId}`,
+        mediaMimetype: media.mimetype,
+        mediaSize: media.data.length
+      };
+      
+      // Calculate response size (base64 increases size by ~33%)
+      const responseSize = JSON.stringify(response).length;
+      const responseSizeMB = responseSize / (1024 * 1024);
+      
+      console.log(`\n✅ [MEDIA DOWNLOAD] Preparing response`);
+      console.log(`   Response size: ${responseSize} bytes (${responseSizeMB.toFixed(2)} MB)`);
+      
+      if (responseSizeMB > 50) {
+        console.error(`   ❌ Response size (${responseSizeMB.toFixed(2)} MB) exceeds safe limit`);
+        return res.status(500).json({ 
+          error: 'Media file too large to send',
+          details: `File size (${sizeInMB.toFixed(2)} MB) exceeds response limit`,
+          mediaSize: media.data.length,
+          responseSize: responseSize
+        });
+      }
+      
+      console.log(`   ✅ Response size is acceptable, sending...`);
+      console.log('='.repeat(80) + '\n');
+      
+      return res.json(response);
+    } catch (responseError) {
+      console.error(`\n❌ [MEDIA DOWNLOAD] Error sending response:`);
+      console.error(`   Error message: ${responseError.message}`);
+      console.error(`   Error stack: ${responseError.stack}`);
+      console.error(`   Error name: ${responseError.name}`);
+      console.error(`   Media size: ${media.data.length} bytes (${(media.data.length / (1024 * 1024)).toFixed(2)} MB)`);
+      console.log('='.repeat(80) + '\n');
+      
+      return res.status(500).json({ 
+        error: 'Failed to send media response',
+        details: responseError.message,
+        mediaSize: media.data.length,
+        errorType: responseError.name
+      });
+    }
   } catch (error) {
-    console.error('❌ Error downloading media:', error);
-    res.status(500).json({ 
+    console.error('\n❌ [MEDIA DOWNLOAD] Unexpected error in download-media endpoint:');
+    console.error(`   Error message: ${error.message}`);
+    console.error(`   Error stack: ${error.stack}`);
+    console.error(`   Error name: ${error.name}`);
+    console.error(`   Error code: ${error.code || 'N/A'}`);
+    console.error(`   Full error object:`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.log('='.repeat(80) + '\n');
+    
+    // Make sure we always send details in the response
+    const errorResponse = { 
       error: 'Failed to download media', 
-      details: error.message 
-    });
+      details: error.message || 'Unknown error occurred',
+      errorType: error.name || 'Error',
+      errorCode: error.code || undefined
+    };
+    
+    console.error(`   Sending error response:`, JSON.stringify(errorResponse, null, 2));
+    
+    return res.status(500).json(errorResponse);
   }
 });
 
@@ -1746,6 +2251,14 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
     // messageTimestamp is in Unix seconds, convert to milliseconds for Date
     const timestamp = messageTimestamp ? new Date(messageTimestamp * 1000) : new Date();
     
+    // Get timezone information
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezoneOffset = timestamp.getTimezoneOffset();
+    const offsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
+    const offsetMinutes = Math.abs(timezoneOffset) % 60;
+    const offsetSign = timezoneOffset <= 0 ? '+' : '-';
+    const offsetString = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+    
     // Use local time methods instead of toISOString() to avoid UTC conversion
     const year = timestamp.getFullYear();
     const month = String(timestamp.getMonth() + 1).padStart(2, '0'); // getMonth() returns 0-11
@@ -1753,14 +2266,20 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
     const date = `${year}-${month}-${day}`; // YYYY-MM-DD format in local time
     const time = timestamp.toTimeString().split(' ')[0]; // HH:MM:SS format (already local time)
     
+    // Log timezone information
     if (messageTimestamp) {
       console.log(`[ATTENDANCE] Using message timestamp: ${date} ${time} (from message)`);
+      console.log(`[ATTENDANCE] Timezone: ${timezone} (UTC${offsetString})`);
+      console.log(`[ATTENDANCE] Original message timestamp (Unix): ${messageTimestamp}`);
+      console.log(`[ATTENDANCE] Converted to local time: ${timestamp.toLocaleString('en-US', { timeZone: timezone })}`);
     } else {
       console.log(`[ATTENDANCE] Using current timestamp: ${date} ${time} (current time)`);
+      console.log(`[ATTENDANCE] Timezone: ${timezone} (UTC${offsetString})`);
+      console.log(`[ATTENDANCE] Current local time: ${timestamp.toLocaleString('en-US', { timeZone: timezone })}`);
     }
 
-    // Prepare the row data: Date, Time, Group, Member, Message
-    const rowData = [date, time, groupName, memberName || memberPhone, message || ''];
+    // Prepare the row data: Date, Time, Group, Member, Message, Timezone
+    const rowData = [date, time, groupName, memberName || memberPhone, message || '', `${timezone} (UTC${offsetString})`];
 
     // Check if Attendance sheet exists, create if it doesn't
     try {
@@ -1782,7 +2301,7 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
                   title: 'Attendance',
                   gridProperties: {
                     rowCount: 1000,
-                    columnCount: 5
+                    columnCount: 6
                   }
                 }
               }
@@ -1790,13 +2309,13 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
           }
         });
 
-        // Add headers
+        // Add headers (with Timezone column)
         await sheets.spreadsheets.values.update({
           spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-          range: 'Attendance!A1:E1',
+          range: 'Attendance!A1:F1',
           valueInputOption: 'RAW',
           resource: {
-            values: [['Date', 'Time', 'Group', 'Member', 'Message']]
+            values: [['Date', 'Time', 'Group', 'Member', 'Message', 'Timezone']]
           }
         });
 
@@ -1810,7 +2329,7 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
     // Append the row to the Attendance sheet
     await sheets.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-      range: 'Attendance!A:E',
+      range: 'Attendance!A:F',
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       resource: {
@@ -1818,7 +2337,7 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
       }
     });
 
-    console.log(`Attendance record written: ${date} ${time} - ${groupName} - ${memberName}`);
+    console.log(`✅ Attendance record written: ${date} ${time} (${timezone} UTC${offsetString}) - ${groupName} - ${memberName}`);
     return true;
   } catch (error) {
     console.error('Error writing attendance to sheet:', error);
