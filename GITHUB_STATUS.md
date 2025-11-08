@@ -9,7 +9,7 @@ But this repository doesn't exist or you don't have access to it.
 ### Your Local Commits (Ready to Push)
 You have **9 commits** ready to upload:
 
-1. ✅ Initial commit: WhatsApp Forwarder with Secret Code Monitoring
+1. ✅ Initial commit: WhatsApp Forwarder
 2. ✅ Optimize codebase for GitHub upload
 3. ✅ Add GitHub upload instructions
 4. ✅ Add comprehensive deployment guide

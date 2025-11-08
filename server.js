@@ -338,335 +338,31 @@ app.get('/messages/:phoneNumber', async (req, res) => {
   }
 });
 
-// Endpoint for secret code monitoring with specific phone numbers
-app.post('/messages-merged', async (req, res) => {
-  if (!isClientReady) {
-    return res.status(400).json({ error: 'WhatsApp client not ready' });
-  }
-  
-  const { phoneNumbers } = req.body;
-  
-  if (!phoneNumbers || phoneNumbers.length === 0) {
-    return res.status(400).json({ error: 'No phone numbers provided' });
-  }
-  
-  // Set a timeout for the entire request
-  const timeout = setTimeout(() => {
-    console.log('Request timeout - taking too long to fetch messages');
-    if (!res.headersSent) {
-      res.status(408).json({ error: 'Request timeout - too many messages to process' });
-    }
-  }, 120000); // 120 second timeout (2 minutes)
-  
-  try {
-    console.log('Fetching merged messages for secret code monitoring:', phoneNumbers);
-    
-    let allMessages = [];
-    const uniqueMessages = new Set();
-    
-    // Include both individual contacts and group chats
-    const allContacts = phoneNumbers;
-    
-    console.log(`Processing ${allContacts.length} contacts/groups from ${phoneNumbers.length} total phone numbers`);
-    
-    for (let i = 0; i < allContacts.length; i++) {
-      const phoneNumber = allContacts[i];
-      console.log(`Processing contact/group ${i + 1}/${allContacts.length}: ${phoneNumber}`);
-      
-      try {
-        // Check if client is still ready before attempting to fetch
-        if (!isClientReady) {
-          console.error(`Client not ready. Cannot fetch messages for ${phoneNumber}`);
-          throw new Error('WhatsApp client session is closed. Please reconnect by scanning QR code.');
-        }
-
-        const chatId = phoneNumber.includes('@') ? phoneNumber : `${phoneNumber}@c.us`;
-        const sourcePhoneClean = (phoneNumber.includes('@') ? phoneNumber.replace(/@.*/, '') : phoneNumber).replace(/\D/g, '');
-        console.log('Getting chat for ID:', chatId);
-        
-        const chat = await client.getChatById(chatId);
-        const chatName = chat.name || 'Unknown';
-        console.log('Chat found:', chatName);
-        
-        // Check if chat is valid
-        if (!chat) {
-          console.log(`Chat not found for ${phoneNumber}, skipping...`);
-          continue;
-        }
-        
-        // Send progress update to client with name
-        if (io && io.engine && io.engine.clientsCount > 0) {
-          io.emit('message-progress', {
-            current: i + 1,
-            total: allContacts.length,
-            phoneNumber: phoneNumber,
-            chatName: chatName
-          });
-        }
-        
-        console.log(`Fetching messages for ${phoneNumber}...`);
-        
-        // Priority: Check for filters to determine message fetch limit
-        let days = 0;
-        let timeFilterStart = 0;
-        let timeFilterEnd = 0;
-        let estimatedLimit, messages;
-        
-        if (req.query.datetimeFilter === 'true' || req.body.datetimeFilter === 'true') {
-          // Check if we have from/to timestamps for precise filtering
-          const fromTimestamp = req.query.from || req.body.from;
-          const toTimestamp = req.query.to || req.body.to;
-          
-          if (fromTimestamp && toTimestamp) {
-            timeFilterStart = parseInt(fromTimestamp);
-            timeFilterEnd = parseInt(toTimestamp);
-            days = Math.ceil((timeFilterEnd - timeFilterStart) / (1000 * 60 * 60 * 24));
-            // Increase limit significantly for time-filtered queries to get all messages
-            // Use at least 500 messages per day, or calculate based on days
-            estimatedLimit = Math.max(500, days * 500);
-            messages = await chat.fetchMessages({ limit: estimatedLimit });
-            console.log(`Using precise datetime filter from=${new Date(timeFilterStart).toLocaleString()}, to=${new Date(timeFilterEnd).toLocaleString()}, days=${days}, limit=${estimatedLimit}`);
-          } else {
-            // Fallback to days-based filtering
-            days = parseInt(req.query.days) || parseInt(req.body.days) || 7;
-            estimatedLimit = Math.max(50, days * 50);
-            messages = await chat.fetchMessages({ limit: estimatedLimit });
-            const now = Date.now();
-            timeFilterStart = now - (days * 24 * 60 * 60 * 1000);
-            timeFilterEnd = now;
-            console.log(`Using days-based filter: days=${days}, limit=${estimatedLimit}`);
-          }
-        } else if (req.query.hours || req.body.hours) {
-          // Hours filter
-          const hours = parseInt(req.query.hours) || parseInt(req.body.hours);
-          days = Math.ceil(hours / 24);
-          estimatedLimit = Math.max(50, days * 50);
-          messages = await chat.fetchMessages({ limit: estimatedLimit });
-          const now = Date.now();
-          timeFilterStart = now - (hours * 60 * 60 * 1000);
-          timeFilterEnd = now;
-          console.log(`Using hours-based filter: hours=${hours}, limit=${estimatedLimit}`);
-        } else if (req.query.days || req.body.days) {
-          // Days filter
-          days = parseInt(req.query.days) || parseInt(req.body.days);
-          estimatedLimit = Math.max(50, days * 50);
-          messages = await chat.fetchMessages({ limit: estimatedLimit });
-          const now = Date.now();
-          timeFilterStart = now - (days * 24 * 60 * 60 * 1000);
-          timeFilterEnd = now;
-          console.log(`Using days-based filter: days=${days}, limit=${estimatedLimit}`);
-        } else {
-          // No filter - load only last 5 messages for fast loading
-          estimatedLimit = 5;
-          messages = await chat.fetchMessages({ limit: estimatedLimit });
-          console.log(`No filter - loading last 5 messages only for fast performance`);
-        }
-        
-        console.log(`\n=== DEBUG for ${phoneNumber} ===`);
-        console.log(`Messages fetched: ${messages.length}`);
-        console.log(`Time filter enabled: ${timeFilterStart > 0}`);
-        if (timeFilterStart > 0) {
-          console.log(`Filter range: ${new Date(timeFilterStart).toLocaleString()} to ${new Date(timeFilterEnd).toLocaleString()}`);
-        }
-        
-        // Debug: Show date range of fetched messages
-        if (messages.length > 0) {
-          const oldestMsg = messages[messages.length - 1];
-          const newestMsg = messages[0];
-          console.log(`Date range for ${phoneNumber}:`, {
-            oldest: new Date(oldestMsg.timestamp * 1000).toLocaleString(),
-            newest: new Date(newestMsg.timestamp * 1000).toLocaleString()
-          });
-        } else {
-          console.log(`No messages fetched from ${phoneNumber} - chat might be empty or inaccessible`);
-        }
-        
-        // Filter messages from the specified time range
-        const recentMessages = messages.filter(msg => {
-          const messageDate = msg.timestamp * 1000;
-          const isWithinTimeRange = timeFilterStart === 0 || (messageDate >= timeFilterStart && messageDate <= timeFilterEnd);
-          return isWithinTimeRange;
-        });
-        
-        if (timeFilterStart > 0 && timeFilterEnd > 0) {
-          console.log(`Recent messages from ${phoneNumber} (custom range): ${recentMessages.length}`);
-        } else {
-          console.log(`Recent messages from ${phoneNumber} (last ${days} days): ${recentMessages.length}`);
-        }
-        console.log(`=== END DEBUG ===\n`);
-        
-        // Debug: Show some sample recent messages
-        if (recentMessages.length > 0) {
-          console.log(`Sample recent messages from ${phoneNumber}:`);
-          recentMessages.slice(0, 3).forEach((msg, index) => {
-            console.log(`  ${index + 1}. "${msg.body}" at ${new Date(msg.timestamp * 1000).toLocaleString()}`);
-          });
-        }
-        
-        // Additional debugging for empty results
-        if (recentMessages.length === 0 && messages.length > 0) {
-          console.log(`All ${messages.length} messages from ${phoneNumber} are older than ${days} days`);
-          // Show some sample message dates
-          const sampleMessages = messages.slice(0, 3);
-          sampleMessages.forEach((msg, index) => {
-            console.log(`Sample message ${index + 1} date:`, new Date(msg.timestamp * 1000).toLocaleString());
-          });
-        }
-        
-        // Process each recent message
-        console.log(`\nProcessing ${recentMessages.length} recent messages from ${phoneNumber}...`);
-        let processedCount = 0;
-        let skippedCount = 0;
-        
-        for (const msg of recentMessages) {
-          // Use _serialized ID like GET endpoint to properly track unique messages
-          const messageId = msg.id?._serialized || msg.id || `${msg.fromMe}_${msg.from}_${msg.timestamp}`;
-          
-          console.log(`  Message ${processedCount + skippedCount + 1}/${recentMessages.length}: ID=${messageId}, timestamp=${new Date(msg.timestamp * 1000).toLocaleString()}, fromMe=${msg.fromMe}, body="${msg.body?.substring(0, 50) || '(no body)'}..."`);
-          
-          if (uniqueMessages.has(messageId)) {
-            console.log(`    ⚠️ SKIPPED - Duplicate messageId: ${messageId}`);
-            skippedCount++;
-            continue; // Skip duplicate messages
-          }
-          uniqueMessages.add(messageId);
-          processedCount++;
-          
-          // Get sender information
-          let senderName = 'Unknown';
-          let senderPhone = '';
-          
-          if (msg.fromMe) {
-            senderName = 'You';
-            senderPhone = 'Me';
-          } else {
-            // Extract phone number from the 'from' field
-            senderPhone = msg.from.replace('@c.us', '').replace('@g.us', '');
-            
-            // Try to get contact name (with shorter timeout to prevent hanging)
-            try {
-              const contactPromise = client.getContactById(msg.from);
-              const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout')), 500) // Reduced from 2000ms to 500ms
-              );
-              const contact = await Promise.race([contactPromise, timeoutPromise]);
-              if (contact && contact.name) {
-                senderName = contact.name;
-              } else {
-                senderName = senderPhone;
-              }
-            } catch (error) {
-              // If timeout or error, just use phone number
-              senderName = senderPhone;
-            }
-          }
-          
-          // Format message data
-          const messageData = {
-            id: messageId,
-            body: msg.body || '',
-            timestamp: msg.timestamp,
-            from: msg.from,
-            fromMe: msg.fromMe,
-            senderName: senderName,
-            senderPhone: senderPhone,
-            chatName: chatName,
-            sourcePhone: sourcePhoneClean,
-            hasMedia: msg.hasMedia,
-            type: msg.type
-          };
-          
-          // Skip media download for now to improve performance
-          // Media can be downloaded on-demand when user clicks on a message
-          if (msg.hasMedia) {
-            messageData.mediaNote = 'Media available - click to download';
-          }
-          
-          allMessages.push(messageData);
-        }
-        
-        console.log(`✓ Processed ${processedCount} messages, skipped ${skippedCount} duplicates for ${phoneNumber}`);
-        console.log(`  Total messages in collection so far: ${allMessages.length}\n`);
-        
-        // Add a small delay between processing each phone number to prevent overwhelming the API
-        if (i < phoneNumbers.length - 1) {
-          console.log('Waiting 25ms before next request...');
-          await new Promise(resolve => setTimeout(resolve, 25)); // Reduced delay
-        }
-        
-      } catch (error) {
-        console.error(`Error fetching messages from ${phoneNumber}:`, error);
-        
-        // Check if it's a session closure error
-        if (error.message && (error.message.includes('Session closed') || error.message.includes('page has been closed'))) {
-          console.error('⚠️ CRITICAL: WhatsApp session has been closed! Client needs to reconnect.');
-          isClientReady = false;
-          if (io && io.engine && io.engine.clientsCount > 0) {
-            io.emit('clientDisconnected', { 
-              reason: 'Session closed. Please scan QR code again to reconnect.',
-              requiresReconnect: true 
-            });
-          }
-          // Clear timeout and return error response
-          clearTimeout(timeout);
-          if (!res.headersSent) {
-            return res.status(503).json({ 
-              error: 'WhatsApp session closed',
-              message: 'The WhatsApp session has been disconnected. Please refresh the page and scan the QR code again to reconnect.',
-              requiresReconnect: true
-            });
-          }
-        }
-        
-        // For other errors, continue with next phone number instead of failing completely
-        continue;
-      }
-    }
-    
-    console.log(`\n========== FINAL SUMMARY ==========`);
-    console.log(`Total unique messages found: ${allMessages.length}`);
-    console.log(`From ${phoneNumbers.length} phone numbers:`, phoneNumbers);
-    console.log(`Unique message IDs tracked: ${uniqueMessages.size}`);
-    
-    // Show breakdown by source phone
-    const messagesBySource = {};
-    allMessages.forEach(msg => {
-      const source = msg.sourcePhone || 'unknown';
-      messagesBySource[source] = (messagesBySource[source] || 0) + 1;
-    });
-    console.log(`Messages by source:`, messagesBySource);
-    console.log(`=====================================\n`);
-    
-    // Clear timeout since we completed successfully
-    clearTimeout(timeout);
-    
-    if (!res.headersSent) {
-      res.json({
-        messages: allMessages,
-        totalMessages: allMessages.length,
-        phoneNumbers: phoneNumbers
-      });
-    }
-    
-  } catch (error) {
-    console.error('Error fetching merged messages:', error);
-    clearTimeout(timeout);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to fetch messages' });
-    }
-  }
-});
-
 // New endpoint to get merged messages from all phone numbers
-app.get('/messages-merged', async (req, res) => {
+async function handleMergedMessagesRequest(req, res) {
   if (!isClientReady) {
     return res.status(400).json({ error: 'WhatsApp client not ready' });
   }
-  
-  if (targetPhoneNumbers.length === 0) {
+
+  // Allow clients to specify the list explicitly (fallback to server-side list)
+  const bodyPhoneNumbers = Array.isArray(req.body?.phoneNumbers)
+    ? req.body.phoneNumbers
+        .filter(num => typeof num === 'string' && num.trim() !== '')
+        .map(num => num.trim())
+    : [];
+
+  const queryPhoneNumbers = Array.isArray(req.query?.phoneNumbers)
+    ? req.query.phoneNumbers
+    : [];
+
+  const contactsToProcess = bodyPhoneNumbers.length > 0
+    ? bodyPhoneNumbers
+    : (queryPhoneNumbers.length > 0 ? queryPhoneNumbers : targetPhoneNumbers);
+
+  if (!contactsToProcess || contactsToProcess.length === 0) {
     return res.status(400).json({ error: 'No phone numbers set' });
   }
-  
+
   // Set a timeout for the entire request
   const timeout = setTimeout(() => {
     console.log('Request timeout - taking too long to fetch messages');
@@ -674,27 +370,23 @@ app.get('/messages-merged', async (req, res) => {
       res.status(408).json({ error: 'Request timeout - too many messages to process' });
     }
   }, 120000); // 120 second timeout (2 minutes)
-  
+
   try {
-    console.log('Fetching merged messages for:', targetPhoneNumbers);
-    
-    // Process all contacts and groups
-    const allContacts = targetPhoneNumbers;
-    
-    console.log(`Processing ${allContacts.length} contacts/groups from ${targetPhoneNumbers.length} total phone numbers`);
-    
+    console.log('Fetching merged messages for:', contactsToProcess);
+    console.log(`Processing ${contactsToProcess.length} contacts/groups`);
+
     let allMessages = [];
     const messageIds = new Set(); // To track unique messages
-    
+
     // Fetch messages from each contact/group
-    for (let i = 0; i < allContacts.length; i++) {
-      const phoneNumber = allContacts[i];
-      console.log(`Processing contact/group ${i + 1}/${allContacts.length}: ${phoneNumber}`);
-      
+    for (let i = 0; i < contactsToProcess.length; i++) {
+      const phoneNumber = contactsToProcess[i];
+      console.log(`Processing contact/group ${i + 1}/${contactsToProcess.length}: ${phoneNumber}`);
+
       try {
         // Handle both individual contacts (@c.us) and groups (@g.us)
         let chatId = phoneNumber;
-        
+
         // If it doesn't have @ in it, assume it's an individual contact
         if (!phoneNumber.includes('@')) {
           let formattedNumber = phoneNumber;
@@ -704,37 +396,37 @@ app.get('/messages-merged', async (req, res) => {
           formattedNumber = formattedNumber.replace(/\D/g, '');
           chatId = `${formattedNumber}@c.us`;
         }
-        
+
         console.log('Fetching messages from contact/group ID:', chatId);
-        
+
         console.log(`Getting chat for ID: ${chatId}`);
         const chat = await client.getChatById(chatId);
-        const chatName = chat.name || 'Unknown';
+        const chatName = chat?.name || 'Unknown';
         console.log('Chat found:', chatName);
-        
+
         // Check if chat is valid
         if (!chat) {
           console.log(`Chat not found for ${phoneNumber}, skipping...`);
           continue;
         }
-        
+
         // Send progress update to client with name
         if (io && io.engine && io.engine.clientsCount > 0) {
-          io.emit('message-progress', { 
-            current: i + 1, 
-            total: allContacts.length, 
+          io.emit('message-progress', {
+            current: i + 1,
+            total: contactsToProcess.length,
             phoneNumber: phoneNumber,
             chatName: chatName
           });
         }
-        
+
         console.log(`Fetching messages for ${phoneNumber}...`);
-        
+
         // Determine time range filter
         let days = 0;
         let timeFilterStart = 0;
         let timeFilterEnd = 0;
-        
+
         if (req.query.datetimeFilter === 'true') {
           // Check if we have from/to timestamps for precise filtering
           if (req.query.from && req.query.to) {
@@ -760,13 +452,13 @@ app.get('/messages-merged', async (req, res) => {
           timeFilterEnd = now;
           console.log(`Using hours-based filter: hours=${hours}, days=${days}`);
         }
-        
+
         // Calculate appropriate limit based on time range (roughly 50 messages per day)
         // If no filter, load minimum 30 to ensure we have enough data
         const estimatedLimit = days > 0 ? Math.max(50, days * 50) : 350; // Default to 350 messages if no filter
         const messages = await chat.fetchMessages({ limit: estimatedLimit });
         console.log(`Messages fetched from ${phoneNumber}:`, messages.length);
-        
+
         // Debug: Show date range of fetched messages
         if (messages.length > 0) {
           const oldestMsg = messages[messages.length - 1];
@@ -779,20 +471,20 @@ app.get('/messages-merged', async (req, res) => {
         } else {
           console.log(`No messages found for ${phoneNumber} - chat might be empty or inaccessible`);
         }
-        
+
         const recentMessages = messages.filter(msg => {
           const messageDate = msg.timestamp * 1000;
           const isWithinTimeRange = timeFilterStart === 0 || (messageDate >= timeFilterStart && messageDate <= timeFilterEnd);
           const isIncoming = !msg.fromMe; // Only show messages received from customers, not sent to them
           return isWithinTimeRange && isIncoming;
         });
-        
+
         if (timeFilterStart > 0 && timeFilterEnd > 0) {
           console.log(`Recent messages from ${phoneNumber} (custom range ${new Date(timeFilterStart).toLocaleString()} to ${new Date(timeFilterEnd).toLocaleString()}):`, recentMessages.length);
         } else {
           console.log(`Recent messages from ${phoneNumber} (last ${days} days):`, recentMessages.length);
         }
-        
+
         // Additional debugging for empty results
         if (recentMessages.length === 0 && messages.length > 0) {
           console.log(`All ${messages.length} messages from ${phoneNumber} are older than ${days} days`);
@@ -802,7 +494,7 @@ app.get('/messages-merged', async (req, res) => {
             console.log(`Sample message ${index + 1} date:`, new Date(msg.timestamp * 1000).toLocaleString());
           });
         }
-        
+
         // Debug: Show some message details
         if (recentMessages.length > 0) {
           console.log(`Sample message from ${phoneNumber}:`, {
@@ -813,31 +505,31 @@ app.get('/messages-merged', async (req, res) => {
         } else {
           console.log(`No recent messages found for ${phoneNumber}`);
         }
-        
+
         // Process messages and add to allMessages
         for (const msg of recentMessages) {
           // Skip if we've already seen this message (by ID)
           if (messageIds.has(msg.id._serialized)) {
             continue;
           }
-          
+
           messageIds.add(msg.id._serialized);
-          
+
           // Get sender information
           let senderName = 'Unknown';
           let senderPhone = '';
-          
+
           if (msg.fromMe) {
             senderName = 'You';
             senderPhone = 'Me';
           } else {
             // Extract phone number from the 'from' field
             senderPhone = msg.from.replace('@c.us', '').replace('@g.us', '');
-            
+
             // Try to get contact name (with shorter timeout to prevent hanging)
             try {
               const contactPromise = client.getContactById(msg.from);
-              const timeoutPromise = new Promise((_, reject) => 
+              const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Timeout')), 500) // Reduced from 2000ms to 500ms
               );
               const contact = await Promise.race([contactPromise, timeoutPromise]);
@@ -851,7 +543,7 @@ app.get('/messages-merged', async (req, res) => {
               senderName = senderPhone;
             }
           }
-          
+
           const messageData = {
             id: msg.id._serialized,
             body: msg.body || '',
@@ -882,43 +574,46 @@ app.get('/messages-merged', async (req, res) => {
         console.error('Full error details:', error.message);
         // Continue with other phone numbers even if one fails
       }
-      
-        // Add a small delay between requests to prevent overwhelming the API
-        if (i < allContacts.length - 1) {
-          console.log('Waiting 25ms before next request...');
-          await new Promise(resolve => setTimeout(resolve, 25)); // Reduced from 50ms to 25ms for faster loading
-        }
+
+      // Add a small delay between requests to prevent overwhelming the API
+      if (i < contactsToProcess.length - 1) {
+        console.log('Waiting 25ms before next request...');
+        await new Promise(resolve => setTimeout(resolve, 25)); // Reduced from 50ms to 25ms for faster loading
+      }
     }
-    
+
     // Sort messages by timestamp (newest first)
     allMessages.sort((a, b) => b.timestamp - a.timestamp);
-    
+
     console.log(`Total unique messages found: ${allMessages.length}`);
-    
+
     // Clear the timeout since we're responding
     clearTimeout(timeout);
-    
+
     // Check if response was already sent (by timeout)
     if (!res.headersSent) {
-      res.json({ 
+      res.json({
         messages: allMessages,
         totalMessages: allMessages.length,
-        phoneNumbers: allContacts
+        phoneNumbers: contactsToProcess
       });
     }
   } catch (error) {
     console.error('Error fetching merged messages:', error);
     clearTimeout(timeout);
-    
+
     // Check if response was already sent (by timeout)
     if (!res.headersSent) {
-      res.status(500).json({ 
-        error: 'Failed to fetch merged messages', 
-        details: error.message 
+      res.status(500).json({
+        error: 'Failed to fetch merged messages',
+        details: error.message
       });
     }
   }
-});
+}
+
+app.get('/messages-merged', handleMergedMessagesRequest);
+app.post('/messages-merged', handleMergedMessagesRequest);
 
 // New endpoint to get all available chats (contacts and groups)
 app.get('/chats', async (req, res) => {
@@ -1980,6 +1675,44 @@ app.post('/groups/:groupName/attendance', async (req, res) => {
   }
 });
 
+// Confirm code for a customer (logs to CodeMonitor sheet)
+app.post('/groups/:groupName/code-confirm', async (req, res) => {
+  try {
+    const groupName = req.params.groupName;
+    const { customerPhone, message = '', messageTimestamp = null } = req.body || {};
+
+    if (!customerPhone) {
+      return res.status(400).json({
+        success: false,
+        error: 'Customer phone number is required'
+      });
+    }
+
+    const result = await recordCodeConfirmation(groupName, customerPhone, message, messageTimestamp);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Code confirmation logged for ${customerPhone}`,
+        record: result.record
+      });
+    } else {
+      const statusCode = result.statusCode || 500;
+      res.status(statusCode).json({
+        success: false,
+        error: result.error || 'Failed to confirm code'
+      });
+    }
+  } catch (error) {
+    console.error('Error confirming code:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to confirm code',
+      details: error.message
+    });
+  }
+});
+
 // Get attendance data for a group
 app.get('/groups/:groupName/attendance', (req, res) => {
   try {
@@ -2447,6 +2180,117 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
   }
 }
 
+async function recordCodeConfirmation(groupName, customerPhone, message = '', messageTimestamp = null) {
+  try {
+    await ensureGroupData();
+    const sheets = await initializeGoogleSheets();
+    if (!sheets) {
+      return { success: false, error: 'Google Sheets not initialized', statusCode: 500 };
+    }
+
+    const group = customerGroups[groupName];
+    if (!group) {
+      return { success: false, error: 'Group not found', statusCode: 404 };
+    }
+
+    const cleanedPhone = customerPhone.replace(/\D/g, '');
+    const customer = group.customers?.find(c => c.phone.replace(/\D/g, '') === cleanedPhone);
+    const memberName = customer?.name || cleanedPhone;
+    const memberPhone = customer?.phone || customerPhone;
+
+    const timestampValue = messageTimestamp ? Number(messageTimestamp) : null;
+    let timestamp = timestampValue ? new Date(timestampValue * 1000) : new Date();
+    if (Number.isNaN(timestamp.getTime())) {
+      console.warn('[CODE] Invalid timestamp provided, using current time');
+      timestamp = new Date();
+    }
+
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezoneOffset = timestamp.getTimezoneOffset();
+    const offsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
+    const offsetMinutes = Math.abs(timezoneOffset) % 60;
+    const offsetSign = timezoneOffset <= 0 ? '+' : '-';
+    const offsetString = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+
+    const year = timestamp.getFullYear();
+    const month = String(timestamp.getMonth() + 1).padStart(2, '0');
+    const day = String(timestamp.getDate()).padStart(2, '0');
+    const date = `${year}-${month}-${day}`;
+    const time = timestamp.toTimeString().split(' ')[0];
+
+    const rowData = [
+      date,
+      time,
+      groupName,
+      memberName,
+      memberPhone,
+      message || '',
+      `${timezone} (UTC${offsetString})`
+    ];
+
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId
+    });
+    const sheetNames = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
+    const codeSheetExists = sheetNames.includes('CodeMonitor');
+
+    if (!codeSheetExists) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+        resource: {
+          requests: [{
+            addSheet: {
+              properties: {
+                title: 'CodeMonitor',
+                gridProperties: {
+                  rowCount: 1000,
+                  columnCount: 7
+                }
+              }
+            }
+          }]
+        }
+      });
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+        range: 'CodeMonitor!A1:G1',
+        valueInputOption: 'RAW',
+        resource: {
+          values: [[
+            'Date',
+            'Time',
+            'Group',
+            'Member',
+            'Phone',
+            'Message',
+            'Timezone'
+          ]]
+        }
+      });
+
+      console.log('[CODE] Created CodeMonitor sheet with headers');
+    }
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+      range: 'CodeMonitor!A:G',
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      resource: {
+        values: [rowData]
+      }
+    });
+
+    console.log(`[CODE] Logged confirmation for ${memberName} (${memberPhone}) in CodeMonitor`);
+
+    return { success: true, record: rowData };
+  } catch (error) {
+    console.error('Error recording code confirmation:', error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+}
+
 async function initializeGoogleSheets() {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -2658,14 +2502,18 @@ function validateSchedulePayload(group, payload = {}, existingSchedule = null, o
     return { error: 'Start time must be in the future' };
   }
 
-  if (endDateTime <= startDateTime) {
-    return { error: 'End time must be after the start time' };
-  }
-
   const recurrenceType = (scheduleData.recurrenceType || existingSchedule?.recurrenceType || 'daily').toLowerCase();
-  const allowedRecurrence = ['daily', 'weekly', 'monthly'];
+  const allowedRecurrence = ['once', 'daily', 'weekly', 'monthly'];
   if (!allowedRecurrence.includes(recurrenceType)) {
     return { error: 'Invalid recurrence type' };
+  }
+
+  if (recurrenceType === 'once') {
+    if (endDateTime < startDateTime) {
+      return { error: 'End time cannot be before the start time for one-time schedules' };
+    }
+  } else if (endDateTime <= startDateTime) {
+    return { error: 'End time must be after the start time' };
   }
 
   let weekdays = [];
@@ -2894,7 +2742,12 @@ function computeNextRunForSchedule(schedule, referenceDate = null) {
   const recurrenceType = (schedule.recurrenceType || 'daily').toLowerCase();
   let candidate = null;
 
-  if (recurrenceType === 'daily') {
+  if (recurrenceType === 'once') {
+    candidate = new Date(startDateTime);
+    if (candidate < now) {
+      return null;
+    }
+  } else if (recurrenceType === 'daily') {
     candidate = new Date(startDateTime);
     if (candidate < now) {
       const dayMs = 24 * 60 * 60 * 1000;
@@ -3295,154 +3148,6 @@ async function updateAttendance(groupName, customerPhone, status = 'present', mo
     return false;
   }
 }
-
-// Function to update customer attendance for manual secret code finder
-async function updateCustomerAttendance(phoneNumber, status, groupKey, secretCode = 'CODE') {
-  try {
-    const sheets = await initializeGoogleSheets();
-    if (!sheets) return false;
-
-    // Resolve group by name first, then by optional id field
-    let groupName = null;
-    if (groupKey && customerGroups[groupKey]) {
-      groupName = groupKey; // Direct name match (sheet/tab name)
-    }
-    if (!groupName && groupKey) {
-      const byId = Object.keys(customerGroups).find(name => customerGroups[name].id === groupKey);
-      if (byId) groupName = byId;
-    }
-    
-    if (!groupName) {
-      console.log(`Group not found for key: ${groupKey}`);
-      return false;
-    }
-
-    const group = customerGroups[groupName];
-    if (!group) return false;
-
-    // Find the customer in the group
-    const customer = group.customers.find(c => {
-      const customerPhoneClean = phoneNumber.replace(/\D/g, '');
-      const cPhoneClean = c.phone.replace(/\D/g, '');
-      return cPhoneClean === customerPhoneClean;
-    });
-    
-    if (!customer) {
-      console.log(`Customer with phone ${phoneNumber} not found in group ${groupName}`);
-      return false;
-    }
-
-    // Get today's date in YYYYMMDD format for the code column
-    const today = new Date();
-    const dateCode = today.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD format
-    const codeColumnName = `${dateCode}${secretCode}`; // e.g., "20251029P" or "20251029Gift"
-
-    // Get the sheet data to find the row for this customer
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-      range: `${groupName}!A:Z`
-    });
-
-    const rows = response.data.values || [];
-    if (rows.length === 0) {
-      console.log(`No data found in sheet ${groupName}`);
-      return false;
-    }
-
-    // Find the customer row
-    let customerRow = -1;
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (row[0] && row[0].replace(/\D/g, '') === customer.phone.replace(/\D/g, '')) {
-        customerRow = i + 1; // Google Sheets is 1-indexed
-        break;
-      }
-    }
-
-    if (customerRow === -1) {
-      console.log(`Customer row not found for ${customer.name} in sheet ${groupName}`);
-      return false;
-    }
-
-    // Find or create the code column for today's date
-    const headerRow = rows[0];
-    let codeCol = -1;
-    
-    // Look for existing code column
-    for (let i = 0; i < headerRow.length; i++) {
-      if (headerRow[i] === codeColumnName) {
-        codeCol = i;
-        break;
-      }
-    }
-
-    // If code column doesn't exist, create it
-    if (codeCol === -1) {
-      codeCol = headerRow.length;
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-        range: `${groupName}!${getColumnLetter(codeCol)}1`,
-        valueInputOption: 'RAW',
-        resource: {
-          values: [[codeColumnName]]
-        }
-      });
-      console.log(`Created new code column: ${codeColumnName}`);
-    }
-
-    // Update the code cell with the secret code confirmation
-    const columnLetter = getColumnLetter(codeCol);
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-      range: `${groupName}!${columnLetter}${customerRow}`,
-      valueInputOption: 'RAW',
-      resource: {
-        values: [['Y']] // Always mark as Y for secret code confirmation
-      }
-    });
-
-    console.log(`Updated Google Sheet: ${groupName}!${columnLetter}${customerRow} = Y`);
-    console.log(`Secret code confirmation written to Google Sheets for ${customer.name} in column ${codeColumnName}`);
-
-    // Write to Attendance sheet with secret code as message
-    // Use current time for secret code responses (when code was detected)
-    const message = `Secret Code: ${secretCode}`;
-    await writeAttendanceToSheet(groupName, customer.name, customer.phone, message, null);
-
-    return true;
-  } catch (error) {
-    console.error('Error updating customer attendance:', error);
-    return false;
-  }
-}
-
-// API endpoint to update customer attendance
-app.post('/api/update-attendance', async (req, res) => {
-  try {
-    const { phoneNumber, status, groupId, groupName, secretCode } = req.body;
-    
-    const groupKey = groupName || groupId; // accept either
-
-    if (!phoneNumber || !status || !groupKey) {
-      return res.status(400).json({ error: 'Missing required parameters' });
-    }
-    
-    console.log(`Updating attendance for ${phoneNumber} to ${status} in group ${groupKey} with secret code: ${secretCode || 'CODE'}`);
-    
-    // Update Google Sheets
-    const success = await updateCustomerAttendance(phoneNumber, status, groupKey, secretCode || 'CODE');
-    
-    if (success) {
-      res.json({ success: true, message: 'Attendance updated successfully' });
-    } else {
-      res.status(500).json({ error: 'Failed to update attendance' });
-    }
-    
-  } catch (error) {
-    console.error('Error updating attendance:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 // Initialize scheduler
 startScheduleChecker();

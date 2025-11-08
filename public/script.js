@@ -58,7 +58,8 @@ const deselectAllRecipientsBtn = document.getElementById('deselectAllRecipientsB
 const recipientCountBadge = document.getElementById('recipientCountBadge');
 const scheduleRecipientsSelected = document.getElementById('scheduleRecipientsSelected');
 const scheduleRecipientsAll = document.getElementById('scheduleRecipientsAll');
-const enableScheduleCheckbox = document.getElementById('enableSchedule');
+const showScheduleBtn = document.getElementById('showScheduleBtn');
+const hideScheduleBtn = document.getElementById('hideScheduleBtn');
 const scheduleOptions = document.getElementById('scheduleOptions');
 const scheduleStartDate = document.getElementById('scheduleStartDate');
 const scheduleStartTime = document.getElementById('scheduleStartTime');
@@ -75,18 +76,13 @@ const scheduledMessagesContainer = document.getElementById('scheduledMessagesCon
 const scheduledMessagesList = document.getElementById('scheduledMessagesList');
 
 // Text filter elements (will be initialized in DOMContentLoaded)
-let textFilter, applyTextFilter, clearTextFilter;
+let textFilterInput, applyTextFilterBtn, clearTextFilterBtn;
 
 // Hours filter elements (will be initialized in DOMContentLoaded)
 let hoursFilter, applyHoursFilter, clearHoursFilter;
 
 // Customer filter elements (will be initialized in DOMContentLoaded)
 let applyCustomerFilter, clearCustomerFilter;
-
-// Secret code monitoring elements (will be initialized in DOMContentLoaded)
-let secretCodeInput, secretCodeGroupSelect, secretCodeTimeRange, includeThumbsUp;
-let secretCodeResults, secretCodeList, totalCustomers, respondedCount, notRespondedCount;
-let selectAllResponded, selectAllNotResponded, sendReminderBtn;
 
 // Time filter elements (will be initialized in DOMContentLoaded)
 let fromDate, toDate, fromTimeSlider, toTimeSlider, fromTimeDisplay, toTimeDisplay, applyTimeFilter, clearTimeFilter, resetTimeFilter;
@@ -102,6 +98,7 @@ let allChats = [];
 let currentFilter = 'all';
 let textFilterEnabled = false;
 let textFilterPattern = '';
+let textFilterDisplayValue = '';
 let selectedCustomerPhone = null;
 let allMessages = []; // Global array to store all loaded messages
 let qrCodeData = null;
@@ -122,6 +119,7 @@ let currentSchedules = [];
 let currentScheduleEditId = null;
 let currentGroupSchedules = [];
 let scheduledListVisible = false;
+let scheduleOptionsVisible = false;
 
 // Message store for forwarding
 let messageStore = {};
@@ -405,23 +403,16 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('🔧 DOM Content Loaded - Initializing elements...');
     
     // Initialize filter elements
-    textFilter = document.getElementById('textFilter');
-    applyTextFilter = document.getElementById('applyTextFilter');
-    clearTextFilter = document.getElementById('clearTextFilter');
+    textFilterInput = document.getElementById('textFilter');
+    applyTextFilterBtn = document.getElementById('applyTextFilter');
+    clearTextFilterBtn = document.getElementById('clearTextFilter');
     hoursFilter = document.getElementById('hoursFilter');
     applyHoursFilter = document.getElementById('applyHoursFilter');
     clearHoursFilter = document.getElementById('clearHoursFilter');
     applyCustomerFilter = document.getElementById('applyCustomerFilter');
     clearCustomerFilter = document.getElementById('clearCustomerFilter');
     
-    // Initialize secret code monitoring elements
-    secretCodeInput = document.getElementById('secretCodeInput');
-    secretCodeGroupSelect = document.getElementById('secretCodeGroupSelect');
-    secretCodeTimeRange = document.getElementById('secretCodeTimeRange');
     includeThumbsUp = document.getElementById('includeThumbsUp');
-    // Auto monitor elements removed - using secret code search only
-    secretCodeResults = document.getElementById('secretCodeResults');
-    secretCodeList = document.getElementById('secretCodeList');
     totalCustomers = document.getElementById('totalCustomers');
     respondedCount = document.getElementById('respondedCount');
     notRespondedCount = document.getElementById('notRespondedCount');
@@ -506,17 +497,6 @@ function setupEventListeners() {
         loadMoreBtn.addEventListener('click', loadMoreMessages);
     }
     
-    // Secret code monitoring event listeners removed - using secret code search only
-    if (selectAllResponded) {
-        selectAllResponded.addEventListener('click', selectAllRespondedCustomers);
-    }
-    if (selectAllNotResponded) {
-        selectAllNotResponded.addEventListener('click', selectAllNotRespondedCustomers);
-    }
-    if (sendReminderBtn) {
-        sendReminderBtn.addEventListener('click', sendSecretCodeReminder);
-    }
-    
     // Navigation event listeners
     navBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -558,8 +538,11 @@ function setupEventListeners() {
         });
     }
 
-    if (enableScheduleCheckbox && scheduleOptions) {
-        enableScheduleCheckbox.addEventListener('change', handleScheduleToggle);
+    if (showScheduleBtn) {
+        showScheduleBtn.addEventListener('click', () => setScheduleVisibility(true));
+    }
+    if (hideScheduleBtn) {
+        hideScheduleBtn.addEventListener('click', () => setScheduleVisibility(false));
     }
 
     document.querySelectorAll('input[name="scheduleRecurrence"]').forEach(radio => {
@@ -568,6 +551,14 @@ function setupEventListeners() {
 
     if (scheduleStartDate) {
         scheduleStartDate.addEventListener('change', handleScheduleStartChange);
+    }
+
+    if (scheduleStartTime) {
+        scheduleStartTime.addEventListener('change', () => {
+            if (getSelectedScheduleRecurrence() === 'once') {
+                syncOnceScheduleWithStart();
+            }
+        });
     }
 
     if (scheduleMessageBtn) {
@@ -595,9 +586,8 @@ function setupEventListeners() {
     selectAllRecipientsBtn.addEventListener('click', selectAllRecipients);
     deselectAllRecipientsBtn.addEventListener('click', deselectAllRecipients);
 
-    initializeScheduleDefaults();
     updateScheduleRecurrenceUI();
-    handleScheduleToggle(true);
+    setScheduleVisibility(false, { isInitializing: true });
     updateScheduleControls();
     renderScheduledMessages([]);
     
@@ -620,11 +610,18 @@ function setupEventListeners() {
     });
     
     // Text filter event listeners
-    if (applyTextFilter) {
-        applyTextFilter.addEventListener('click', applyTextFilterToMessages);
+    if (applyTextFilterBtn) {
+        applyTextFilterBtn.addEventListener('click', applyTextFilterToMessages);
     }
-    if (clearTextFilter) {
-        clearTextFilter.addEventListener('click', clearTextFilterFromMessages);
+    if (clearTextFilterBtn) {
+        clearTextFilterBtn.addEventListener('click', clearTextFilterFromMessages);
+    }
+    if (textFilterInput) {
+        textFilterInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                applyTextFilterToMessages();
+            }
+        });
     }
     
     // Hours filter event listeners
@@ -1425,13 +1422,16 @@ function addMessageToContainer(message) {
     }
     
     // Check if sender is from customer groups (for marking attendance)
-    let markAttendanceBtn = '';
+    let attendanceActionButtons = '';
     if (!message.isFromMe && message.senderPhone && message.senderPhone !== 'Me') {
         // Extract phone number from senderPhone (remove @c.us or @g.us)
         const customerPhone = message.senderPhone.replace('@c.us', '').replace('@g.us', '');
-        markAttendanceBtn = `
+        attendanceActionButtons = `
             <button class="btn-mark-attendance" data-customer-phone="${customerPhone}" data-message-timestamp="${message.timestamp}">
                 <i class="fas fa-check-circle"></i> Mark Present
+            </button>
+            <button class="btn-confirm-code" data-customer-phone="${customerPhone}" data-message-timestamp="${message.timestamp}">
+                <i class="fas fa-key"></i> Confirm Code
             </button>
         `;
     }
@@ -1450,7 +1450,7 @@ function addMessageToContainer(message) {
             <button class="btn-forward" data-message-id="${message.id}">
                 <i class="fas fa-share"></i> Forward
             </button>
-            ${markAttendanceBtn}
+            ${attendanceActionButtons}
         </div>
     `;
     
@@ -1482,6 +1482,18 @@ function addMessageToContainer(message) {
             const messageBody = message ? (message.body || '') : '';
             const timestamp = messageTimestamp ? parseInt(messageTimestamp) : null; // Ensure it's a number
             markAttendanceFromMessage(customerPhone, messageTimestamp, messageBody);
+        });
+    }
+
+    const confirmCodeBtnElement = messageDiv.querySelector('.btn-confirm-code');
+    if (confirmCodeBtnElement) {
+        confirmCodeBtnElement.addEventListener('click', function() {
+            const customerPhone = this.getAttribute('data-customer-phone');
+            const messageTimestamp = this.getAttribute('data-message-timestamp');
+            const messageId = messageDiv.getAttribute('data-message-id');
+            const message = messageStore[messageId] || allMessages.find(m => m.id === messageId);
+            const messageBody = message ? (message.body || '') : '';
+            confirmCodeFromMessage(customerPhone, messageTimestamp, messageBody);
         });
     }
     
@@ -1774,7 +1786,7 @@ function getSavedLists() {
 // Navigation and Section Management
 function showSection(sectionName) {
     // Hide all sections
-    document.querySelectorAll('.status-card, .qr-section, .phone-section, .messages-section, .groups-section, .group-message-section, .secret-code-section, .manual-secret-code-section').forEach(section => {
+    document.querySelectorAll('.status-card, .qr-section, .phone-section, .messages-section, .groups-section, .group-message-section').forEach(section => {
         section.style.display = 'none';
     });
     
@@ -1802,20 +1814,6 @@ function showSection(sectionName) {
             break;
         case 'groups':
             groupsSection.style.display = 'block';
-            if (Object.keys(currentGroups).length === 0) {
-                loadCustomerGroups();
-            }
-            break;
-        case 'secretCode':
-            document.getElementById('secretCodeSection').style.display = 'block';
-            // Load groups for secret code monitoring if not already loaded
-            if (Object.keys(currentGroups).length === 0) {
-                loadCustomerGroups();
-            }
-            break;
-        case 'secretCode':
-            document.getElementById('secretCodeSection').style.display = 'block';
-            // Load groups for secret code search if not already loaded
             if (Object.keys(currentGroups).length === 0) {
                 loadCustomerGroups();
             }
@@ -1883,119 +1881,6 @@ function displayGroups(groups) {
         `;
         groupsContainer.appendChild(groupCard);
     });
-    
-    // Update secret code group select
-    updateSecretCodeGroupSelect();
-}
-
-// Update secret code group select dropdown
-function updateSecretCodeGroupSelect() {
-    if (!secretCodeGroupSelect) return;
-    
-    // Clear existing options
-    secretCodeGroupSelect.innerHTML = '<option value="">Select a group...</option>';
-    
-    // Add groups to select
-    Object.values(currentGroups).forEach(group => {
-        const option = document.createElement('option');
-        option.value = group.name;
-        option.textContent = group.name;
-        secretCodeGroupSelect.appendChild(option);
-    });
-}
-
-// Function to check if message contains secret code with relaxed matching
-function containsSecretCode(messageBody, secretCode, includeThumbsUpFlag) {
-    if (!messageBody || !secretCode) return false;
-    
-    const message = messageBody.toLowerCase().trim();
-    const code = secretCode.toLowerCase().trim();
-    
-    // If includeThumbsUp is checked, add thumbs up variations
-    let searchPatterns = [code];
-    
-    if (includeThumbsUpFlag) {
-        // Add various thumbs up combinations
-        searchPatterns.push(
-            `👍${code}`,
-            `👍 ${code}`,
-            `${code}👍`,
-            `${code} 👍`,
-            `👍${code}👍`,
-            `👍 ${code} 👍`
-        );
-    }
-    
-    // Check for exact matches first
-    for (const pattern of searchPatterns) {
-        if (message.includes(pattern)) {
-            return true;
-        }
-    }
-    
-    // Relaxed matching - remove spaces and special characters for more flexible matching
-    const cleanMessage = message.replace(/[^\w👍]/g, '');
-    const cleanCode = code.replace(/[^\w]/g, '');
-    
-    // Check if the clean code appears anywhere in the clean message
-    if (cleanMessage.includes(cleanCode)) {
-        return true;
-    }
-    
-    // Check for partial matches with thumbs up
-    if (includeThumbsUpFlag) {
-        // Look for thumbs up followed by any part of the code
-        const thumbsUpIndex = cleanMessage.indexOf('👍');
-        if (thumbsUpIndex !== -1) {
-            const afterThumbsUp = cleanMessage.substring(thumbsUpIndex + 1);
-            if (afterThumbsUp.includes(cleanCode) || cleanCode.includes(afterThumbsUp)) {
-                return true;
-            }
-        }
-        
-        // Look for code followed by thumbs up
-        const codeIndex = cleanMessage.indexOf(cleanCode);
-        if (codeIndex !== -1) {
-            const afterCode = cleanMessage.substring(codeIndex + cleanCode.length);
-            if (afterCode.includes('👍')) {
-                return true;
-            }
-        }
-    }
-    
-    return false;
-}
-
-// Function to highlight secret code in message text
-function highlightSecretCode(messageBody, secretCode, includeThumbsUpFlag) {
-    if (!messageBody || !secretCode) return messageBody;
-    
-    const message = messageBody;
-    const code = secretCode.toLowerCase();
-    
-    // Create patterns to match
-    let patterns = [code];
-    
-    if (includeThumbsUpFlag) {
-        patterns.push(
-            `👍${code}`,
-            `👍 ${code}`,
-            `${code}👍`,
-            `${code} 👍`,
-            `👍${code}👍`,
-            `👍 ${code} 👍`
-        );
-    }
-    
-    let highlightedMessage = message;
-    
-    // Highlight each pattern
-    patterns.forEach(pattern => {
-        const regex = new RegExp(`(${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-        highlightedMessage = highlightedMessage.replace(regex, '<span class="highlighted-code">$1</span>');
-    });
-    
-    return highlightedMessage;
 }
 
 // Function removed - no longer using collapsible view
@@ -2356,23 +2241,32 @@ function initializeScheduleDefaults() {
     setWeeklyDefaultSelection(defaultStart.getDay());
 }
 
-function handleScheduleToggle(isInitializing = false) {
-    if (!enableScheduleCheckbox || !scheduleOptions) {
+function setScheduleVisibility(shouldShow = false, options = {}) {
+    if (!scheduleOptions) {
         return;
     }
 
-    const shouldShow = enableScheduleCheckbox.checked;
-    scheduleOptions.style.display = shouldShow ? 'block' : 'none';
+    const { isInitializing = false } = options;
+    scheduleOptionsVisible = Boolean(shouldShow);
 
-    if (shouldShow && !scheduleOptions.dataset.initialized) {
+    if (showScheduleBtn) {
+        showScheduleBtn.style.display = scheduleOptionsVisible ? 'none' : 'inline-flex';
+    }
+    if (hideScheduleBtn) {
+        hideScheduleBtn.style.display = scheduleOptionsVisible ? 'inline-flex' : 'none';
+    }
+
+    scheduleOptions.style.display = scheduleOptionsVisible ? 'block' : 'none';
+
+    if (scheduleOptionsVisible && !scheduleOptions.dataset.initialized) {
         initializeScheduleDefaults();
         scheduleOptions.dataset.initialized = 'true';
     }
 
-    if (!shouldShow && !isInitializing) {
-        console.log('[SCHEDULE] Scheduling disabled by user');
-        if (currentScheduleEditId) {
-            cancelScheduleEdit();
+    if (!scheduleOptionsVisible && !isInitializing) {
+        console.log('[SCHEDULE] Scheduling panel hidden by user');
+        if (isEditingSchedule) {
+            exitScheduleEditMode(false);
         }
     }
 }
@@ -2401,6 +2295,10 @@ function updateScheduleRecurrenceUI() {
             }
         }
     }
+
+    if (recurrence === 'once') {
+        syncOnceScheduleWithStart();
+    }
 }
 
 function handleScheduleStartChange() {
@@ -2418,6 +2316,7 @@ function handleScheduleStartChange() {
     }
 
     setWeeklyDefaultSelection(startDate.getDay());
+    syncOnceScheduleWithStart();
 }
 
 function setWeeklyDefaultSelection(dayNumber) {
@@ -2434,6 +2333,20 @@ function setWeeklyDefaultSelection(dayNumber) {
     weeklyCheckboxes.forEach(cb => {
         cb.checked = Number(cb.value) === Number(dayNumber);
     });
+}
+
+function syncOnceScheduleWithStart() {
+    if (getSelectedScheduleRecurrence() !== 'once') {
+        return;
+    }
+
+    if (scheduleStartDate && scheduleStartDate.value && scheduleEndDate) {
+        scheduleEndDate.value = scheduleStartDate.value;
+    }
+
+    if (scheduleStartTime && scheduleStartTime.value && scheduleEndTime) {
+        scheduleEndTime.value = scheduleStartTime.value;
+    }
 }
 
 function getSelectedScheduleRecurrence() {
@@ -2480,6 +2393,10 @@ function formatLocalDateTime(isoString) {
 
 function buildRecurrenceLabel(schedule) {
     const recurrence = (schedule.recurrenceType || 'daily').toLowerCase();
+    if (recurrence === 'once') {
+        return 'Once';
+    }
+
     if (recurrence === 'daily') {
         return 'Daily';
     }
@@ -2726,10 +2643,9 @@ async function enterScheduleEditMode(schedule) {
             groupMediaInput.value = schedule.mediaUrl || '';
         }
 
-        if (enableScheduleCheckbox && !enableScheduleCheckbox.checked) {
-            enableScheduleCheckbox.checked = true;
+        if (!scheduleOptionsVisible) {
+            setScheduleVisibility(true);
         }
-        handleScheduleToggle();
 
         if (scheduleStartDate) scheduleStartDate.value = schedule.startDate || '';
         if (scheduleStartTime) scheduleStartTime.value = schedule.startTime || '';
@@ -2783,7 +2699,7 @@ function exitScheduleEditMode(showMessage = false) {
     editingScheduleData = null;
 
     if (scheduleMessageBtn) {
-        scheduleMessageBtn.innerHTML = '<i class="fas fa-calendar-alt"></i> Schedule Message';
+        scheduleMessageBtn.innerHTML = '<i class="fas fa-calendar-plus"></i> Schedule Message';
     }
     if (cancelScheduleEditBtn) {
         cancelScheduleEditBtn.style.display = 'none';
@@ -2828,8 +2744,8 @@ async function scheduleGroupMessage() {
             return;
         }
 
-        if (!enableScheduleCheckbox || !enableScheduleCheckbox.checked) {
-            showNotification('Enable scheduling first', 'error');
+        if (!scheduleOptionsVisible) {
+            showNotification('Show the scheduling options first', 'error');
             return;
         }
 
@@ -2864,18 +2780,26 @@ async function scheduleGroupMessage() {
             return;
         }
 
+        const recurrenceType = getSelectedScheduleRecurrence();
+
         const now = new Date();
         if (!isEditingSchedule && startDateTime <= now) {
             showNotification('Start time must be in the future', 'error');
             return;
         }
 
-        if (endDateTime <= startDateTime) {
-            showNotification('End time must be after the start time', 'error');
-            return;
+        if (recurrenceType === 'once') {
+            if (endDateTime < startDateTime) {
+                showNotification('End time cannot be before the start time', 'error');
+                return;
+            }
+        } else {
+            if (endDateTime <= startDateTime) {
+                showNotification('End time must be after the start time', 'error');
+                return;
+            }
         }
 
-        const recurrenceType = getSelectedScheduleRecurrence();
         let weekdays = [];
         let monthlyDay = null;
 
@@ -3191,33 +3115,25 @@ async function sendFollowupToAbsentees(groupName) {
 // Apply text filter to messages
 function applyTextFilterToMessages() {
     try {
-        if (!textFilter) {
+        if (!textFilterInput) {
             console.error('Text filter element not found');
             showNotification('Text filter not available', 'error');
             return;
         }
-        
-        const filterText = textFilter.value.trim();
-        
+
+        const filterText = textFilterInput.value.trim();
+
         if (!filterText) {
             showNotification('Please enter text to filter by', 'error');
             return;
         }
-        
-        console.log('[TEXT FILTER] Applying text filter', {
-            filterText,
-            totalMessages: messagesContainer ? messagesContainer.querySelectorAll('.message').length : 0,
-            textFilterEnabled,
-            previousPattern: textFilterPattern
-        });
 
-        // Store filter settings
         textFilterEnabled = true;
         textFilterPattern = filterText.toLowerCase();
-        
-        // Filter and display messages
+        textFilterDisplayValue = filterText;
+
         filterMessagesByText();
-        
+
         showNotification(`Filtering messages containing: "${filterText}"`, 'success');
     } catch (error) {
         console.error('Error applying text filter:', error);
@@ -3228,27 +3144,19 @@ function applyTextFilterToMessages() {
 // Clear text filter
 function clearTextFilterFromMessages() {
     try {
-        if (!textFilter) {
+        if (!textFilterInput) {
             console.error('Text filter element not found');
             showNotification('Text filter not available', 'error');
             return;
         }
-        
-        console.log('[TEXT FILTER] Clearing text filter', {
-            previousPattern: textFilterPattern,
-            totalMessages: messagesContainer ? messagesContainer.querySelectorAll('.message').length : 0
-        });
 
         textFilterEnabled = false;
         textFilterPattern = '';
-        textFilter.value = '';
-        
-        // Show all messages
-        const messageElements = messagesContainer.querySelectorAll('.message');
-        messageElements.forEach(messageElement => {
-            messageElement.style.display = 'block';
-        });
-        
+        textFilterDisplayValue = '';
+        textFilterInput.value = '';
+
+        applyAllActiveFilters();
+
         showNotification('Text filter cleared', 'success');
     } catch (error) {
         console.error('Error clearing text filter:', error);
@@ -3258,59 +3166,42 @@ function clearTextFilterFromMessages() {
 
 // Filter messages by text content
 function filterMessagesByText() {
-    try {
-        if (!textFilterEnabled) {
-            // Text filter cleared - reapply other active filters
-            applyAllActiveFilters();
+    if (!textFilterEnabled || !messagesContainer) {
+        return;
+    }
+
+    const messageElements = messagesContainer.querySelectorAll('.message');
+    let visibleCount = 0;
+    let hiddenCount = 0;
+
+    messageElements.forEach(messageElement => {
+        if (!messageElement) {
             return;
         }
-        
-        const messageElements = messagesContainer.querySelectorAll('.message');
-        let visibleCount = 0;
-        let hiddenCount = 0;
-        
-        console.log('[TEXT FILTER] Filtering messages', {
-            pattern: textFilterPattern,
-            messageCount: messageElements.length
-        });
 
-        messageElements.forEach(messageElement => {
-            const messageTextElement = messageElement.querySelector('.message-text') || messageElement.querySelector('.message-body');
-            let messageBody = '';
-            if (messageTextElement) {
-                messageBody = (messageTextElement.textContent || '').toLowerCase();
-            } else {
-                messageBody = (messageElement.textContent || '').toLowerCase();
-            }
-            
-            // Get current display status to preserve other filters
-            const currentDisplay = messageElement.style.display;
-            
-            if (currentDisplay !== 'none') {
-                const messageId = messageElement.getAttribute('data-message-id') || 'unknown';
-                if (messageBody.includes(textFilterPattern)) {
-                    messageElement.style.display = 'block';
-                    visibleCount++;
-                    console.log('[TEXT FILTER] Match', { messageId, snippet: messageBody.slice(0, 80) });
-                } else {
-                    messageElement.style.display = 'none';
-                    hiddenCount++;
-                    console.log('[TEXT FILTER] Hidden', { messageId, snippet: messageBody.slice(0, 80) });
-                }
-            }
-        });
-        
-        console.log('[TEXT FILTER] Filter result', {
-            pattern: textFilterPattern,
-            visibleCount,
-            hiddenCount
-        });
+        if (messageElement.style.display === 'none') {
+            return; // already hidden by another filter
+        }
 
-        showNotification(`Showing ${visibleCount} messages containing "${textFilterPattern}" (${hiddenCount} hidden)`, 'info');
-    } catch (error) {
-        console.error('Error filtering messages by text:', error);
-        showNotification('Error filtering messages by text', 'error');
-    }
+        const messageTextElement = messageElement.querySelector('.message-text') || messageElement.querySelector('.message-body');
+        let messageBody = '';
+        if (messageTextElement) {
+            messageBody = (messageTextElement.textContent || '').toLowerCase();
+        } else {
+            messageBody = (messageElement.textContent || '').toLowerCase();
+        }
+
+        if (messageBody.includes(textFilterPattern)) {
+            messageElement.style.display = 'block';
+            visibleCount++;
+        } else {
+            messageElement.style.display = 'none';
+            hiddenCount++;
+        }
+    });
+
+    const displayValue = textFilterDisplayValue || textFilterPattern;
+    showNotification(`Showing ${visibleCount} messages containing "${displayValue}" (${hiddenCount} hidden)`, 'info');
 }
 
 // Apply hours filter to messages
@@ -4239,6 +4130,60 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
     }
 }
 
+// Confirm secret code from a message (logs to CodeMonitor sheet)
+async function confirmCodeFromMessage(customerPhone, messageTimestamp, messageBody = '') {
+    try {
+        let foundGroup = selectedGroup;
+        console.log(`[CODE] Selected group: ${selectedGroup || '(none)'}`);
+
+        if (!foundGroup) {
+            Object.keys(currentGroups).forEach(groupName => {
+                const group = currentGroups[groupName];
+                if (group.customers && Array.isArray(group.customers)) {
+                    const customer = group.customers.find(c => {
+                        const cleanCustomerPhone = c.phone.replace(/\D/g, '');
+                        const cleanMessagePhone = customerPhone.replace(/\D/g, '');
+                        return cleanCustomerPhone === cleanMessagePhone;
+                    });
+                    if (customer && !foundGroup) {
+                        foundGroup = groupName;
+                    }
+                }
+            });
+        }
+
+        if (!foundGroup) {
+            showNotification('Customer not found in any group. Please select a group first.', 'error');
+            return;
+        }
+
+        console.log(`[CODE] Logging code confirmation for group: ${foundGroup}, customer: ${customerPhone}`);
+
+        const response = await fetch(`/groups/${foundGroup}/code-confirm`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                customerPhone: customerPhone,
+                message: messageBody,
+                messageTimestamp: messageTimestamp ? parseInt(messageTimestamp) : null
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification('Code confirmed and logged to CodeMonitor.', 'success');
+        } else {
+            showNotification('Failed to confirm code: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error confirming code:', error);
+        showNotification('Error confirming code', 'error');
+    }
+}
+
 // Enhanced Time Filter Functions
 
 // Apply time preset
@@ -4563,914 +4508,4 @@ function loadMoreMessages() {
         }
     });
 }
-
-// Secret Code Search Functions
-let secretCodeData = {
-    code: '',
-    group: '',
-    customers: [],
-    responses: new Map()
-};
-
-
-// Auto monitor function removed - using secret code search only
-
-// Display secret code results
-function displaySecretCodeResults(messagesData = null) {
-    if (!secretCodeList) return;
-    
-    const total = secretCodeData.customers.length;
-    const responded = secretCodeData.responses.size;
-    const notResponded = total - responded;
-    
-    // Update stats
-    if (totalCustomers) totalCustomers.textContent = total;
-    if (respondedCount) respondedCount.textContent = responded;
-    if (notRespondedCount) notRespondedCount.textContent = notResponded;
-    
-    // Display customer list
-    displayCustomerList();
-}
-
-// Display customer list with view messages and mark received buttons
-function displayCustomerList() {
-    if (!secretCodeList) return;
-    
-    const html = secretCodeData.customers.map(customer => {
-        const hasResponded = secretCodeData.responses.has(customer.phone);
-        const hasLoadedMessages = secretCodeData.loadedMessages.has(customer.phone);
-        
-        return `
-            <div class="customer-item" data-phone="${customer.phone}">
-                <div class="customer-info">
-                    <div class="customer-name">${customer.name}</div>
-                    <div class="customer-group">${secretCodeData.group}</div>
-                </div>
-                <div class="customer-actions">
-                            <button class="btn-view-messages" onclick="console.log('Button clicked for:', '${customer.phone}'); loadCustomerMessages('${customer.phone}')">
-                                <i class="fas fa-comments"></i> View Messages
-                            </button>
-                    <button class="btn-mark-received" onclick="markCodeReceived('${customer.phone}')" ${hasResponded ? 'disabled' : ''}>
-                        <i class="fas fa-check"></i> ${hasResponded ? 'Code Received' : 'Mark as Received'}
-                    </button>
-                </div>
-            </div>
-        `;
-    }).join('');
-    
-    secretCodeList.innerHTML = html;
-}
-
-// Load messages for a specific customer
-async function loadCustomerMessages(phoneNumber) {
-    try {
-        console.log('=== LOADING CUSTOMER MESSAGES ===');
-        console.log('Phone:', phoneNumber);
-        showNotification('Loading messages...', 'info');
-        console.log('[SecretCode] loadCustomerMessages:start', {
-            phoneNumber,
-            timeRangeHours: secretCodeData.timeRangeHours,
-            group: secretCodeData.group
-        });
-        
-        // Get the time range in hours
-        const timeRangeHours = secretCodeData.timeRangeHours;
-        
-        // Fetch messages for this specific customer
-        const response = await fetch(`/messages/${phoneNumber}?days=${timeRangeHours / 24}`);
-        console.log('[SecretCode] loadCustomerMessages:request', {
-            url: `/messages/${phoneNumber}?days=${timeRangeHours / 24}`
-        });
-        
-        if (!response.ok) {
-            console.error('[SecretCode] loadCustomerMessages:http_error', response.status, response.statusText);
-            throw new Error(`Failed to fetch messages: ${response.status} ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        const messages = data.messages || [];
-        console.log('[SecretCode] loadCustomerMessages:response', {
-            total: messages.length,
-            sample: messages.slice(0, 3).map(m => ({ body: m.body, ts: m.timestamp }))
-        });
-        
-        // Store loaded messages
-        secretCodeData.loadedMessages.set(phoneNumber, messages);
-        
-        // Display messages for this customer
-        displayCustomerMessages(phoneNumber, messages);
-        
-        console.log('[SecretCode] loadCustomerMessages:done', { phoneNumber, shown: messages.length });
-        showNotification('Messages loaded successfully', 'success');
-        
-    } catch (error) {
-        console.error('Error loading messages:', error);
-        showNotification('Failed to load messages: ' + error.message, 'error');
-    }
-}
-
-// Display messages for a specific customer
-function displayCustomerMessages(phoneNumber, messages) {
-    const customer = secretCodeData.customers.find(c => c.phone === phoneNumber);
-    if (!customer) return;
-    
-    // Find the customer item in the DOM
-    const customerItem = document.querySelector(`[data-phone="${phoneNumber}"]`);
-    if (!customerItem) return;
-    
-    // Check if message viewer already exists
-    let messageViewer = customerItem.querySelector('.message-viewer');
-    
-    if (!messageViewer) {
-        // Create message viewer
-        messageViewer = document.createElement('div');
-        messageViewer.className = 'message-viewer';
-        messageViewer.innerHTML = `
-            <div class="message-viewer-header">
-                <h4>Messages from ${customer.name}</h4>
-                <button class="btn btn-sm btn-secondary" onclick="closeCustomerMessages('${phoneNumber}')">
-                    <i class="fas fa-times"></i> Close
-                </button>
-            </div>
-            <div class="message-list" id="messageList-${phoneNumber}">
-                <!-- Messages will be loaded here -->
-            </div>
-            <div class="message-actions">
-                <button class="btn btn-success" onclick="markCodeReceived('${phoneNumber}')">
-                    <i class="fas fa-check"></i> Mark as Code Received
-                </button>
-            </div>
-        `;
-        
-        // Insert after the customer item
-        customerItem.parentNode.insertBefore(messageViewer, customerItem.nextSibling);
-    }
-    
-    // Show the message viewer
-    messageViewer.classList.add('active');
-    
-        // Display messages with highlighting
-        const messageList = messageViewer.querySelector('.message-list');
-        
-        // Filter messages by time range
-        const now = Date.now();
-        const timeRangeMs = secretCodeData.timeRangeHours * 60 * 60 * 1000;
-        const filteredMessages = messages.filter(msg => {
-            const messageTime = msg.timestamp * 1000;
-            return (now - messageTime) <= timeRangeMs;
-        });
-    console.log('[SecretCode] displayCustomerMessages', {
-        phoneNumber,
-        received: messages.length,
-        withinRange: filteredMessages.length,
-        timeRangeHours: secretCodeData.timeRangeHours
-    });
-        
-        // Sort messages by timestamp (newest first)
-        filteredMessages.sort((a, b) => b.timestamp - a.timestamp);
-        
-        const html = filteredMessages.map(msg => {
-            const messageTime = new Date(msg.timestamp * 1000).toLocaleString();
-            const isMatch = containsSecretCode(msg.body, secretCodeData.code, secretCodeData.includeThumbsUp);
-            
-            return `
-                <div class="message-item ${isMatch ? 'highlighted' : ''}">
-                    <div class="message-content">${highlightSecretCode(msg.body, secretCodeData.code, secretCodeData.includeThumbsUp)}</div>
-                    <div class="message-meta">
-                        ${messageTime} ${msg.isFromMe ? '(You)' : `(${msg.senderName})`}
-                        ${isMatch ? '<span style="color: #28a745; font-weight: bold;"> ✓ MATCH</span>' : ''}
-                    </div>
-                </div>
-            `;
-        }).join('');
-        
-        messageList.innerHTML = html;
-}
-
-// Close customer messages
-function closeCustomerMessages(phoneNumber) {
-    const customerItem = document.querySelector(`[data-phone="${phoneNumber}"]`);
-    if (customerItem) {
-        const messageViewer = customerItem.nextElementSibling;
-        if (messageViewer && messageViewer.classList.contains('message-viewer')) {
-            messageViewer.classList.remove('active');
-        }
-    }
-}
-
-// Mark code as received for a customer
-async function markCodeReceived(phoneNumber) {
-    try {
-        const customer = secretCodeData.customers.find(c => c.phone === phoneNumber);
-        if (!customer) {
-            showNotification('Customer not found', 'error');
-            return;
-        }
-        
-        // Update local state
-        secretCodeData.responses.set(phoneNumber, {
-            timestamp: Date.now(),
-            customer: customer
-        });
-        
-        // Update Google Sheets
-        const success = await updateAttendanceInGoogleSheets(phoneNumber, 'Y');
-        
-        if (success) {
-            showNotification(`Code marked as received for ${customer.name}`, 'success');
-            
-            // Update the UI
-            displayCustomerList();
-            
-            // Update stats
-    const total = secretCodeData.customers.length;
-    const responded = secretCodeData.responses.size;
-    const notResponded = total - responded;
-    
-    if (totalCustomers) totalCustomers.textContent = total;
-    if (respondedCount) respondedCount.textContent = responded;
-    if (notRespondedCount) notRespondedCount.textContent = notResponded;
-        } else {
-            showNotification('Failed to update Google Sheets', 'error');
-        }
-        
-    } catch (error) {
-        console.error('Error marking code as received:', error);
-        showNotification('Failed to mark code as received: ' + error.message, 'error');
-    }
-}
-
-// Update attendance in Google Sheets
-async function updateAttendanceInGoogleSheets(phoneNumber, status) {
-    try {
-        const response = await fetch('/api/update-attendance', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                phoneNumber: phoneNumber,
-                status: status,
-                groupName: secretCodeData.group
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to update attendance');
-        }
-        
-        const result = await response.json();
-        return result.success;
-        
-    } catch (error) {
-        console.error('Error updating attendance:', error);
-        return false;
-    }
-}
-
-// Select all responded customers
-function selectAllRespondedCustomers() {
-    const checkboxes = secretCodeList.querySelectorAll('.secret-code-checkbox');
-    checkboxes.forEach(checkbox => {
-        const phone = checkbox.dataset.phone;
-        const hasResponded = secretCodeData.responses.has(phone);
-        checkbox.checked = hasResponded;
-    });
-}
-
-// Select all not responded customers
-function selectAllNotRespondedCustomers() {
-    const checkboxes = secretCodeList.querySelectorAll('.secret-code-checkbox');
-    checkboxes.forEach(checkbox => {
-        const phone = checkbox.dataset.phone;
-        const hasResponded = secretCodeData.responses.has(phone);
-        checkbox.checked = !hasResponded;
-    });
-}
-
-// Send reminder to selected customers
-async function sendSecretCodeReminder() {
-    const selectedCheckboxes = secretCodeList.querySelectorAll('.secret-code-checkbox:checked');
-    
-    if (selectedCheckboxes.length === 0) {
-        showNotification('Please select customers to send reminder to', 'warning');
-        return;
-    }
-    
-    const selectedPhones = Array.from(selectedCheckboxes).map(cb => cb.dataset.phone);
-    const selectedCustomers = secretCodeData.customers.filter(c => selectedPhones.includes(c.phone));
-    
-    // Create reminder message
-    const thumbsUpHint = secretCodeData.includeThumbsUp ? ' (you can also use 👍 with the code)' : '';
-    const reminderMessage = `🔔 Reminder: Please reply with the secret code "${secretCodeData.code}"${thumbsUpHint} to confirm your response.`;
-    
-    try {
-        // Send reminder to each selected customer
-        for (const customer of selectedCustomers) {
-            await sendMessageToCustomer(customer.phone, reminderMessage);
-        }
-        
-        showNotification(`Reminder sent to ${selectedCustomers.length} customers`, 'success');
-        
-    } catch (error) {
-        console.error('Error sending reminders:', error);
-        showNotification('Failed to send some reminders', 'error');
-    }
-}
-
-// Send message to individual customer
-async function sendMessageToCustomer(phoneNumber, message) {
-    try {
-        const response = await fetch('/send-message', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                phoneNumber: phoneNumber,
-                message: message
-            })
-        });
-        
-        const result = await response.json();
-        return result;
-    } catch (error) {
-        console.error('Error sending message:', error);
-        throw error;
-    }
-}
-
-// Manual Secret Code Finder functionality
-let secretCodeSearchData = {
-    secretCode: '',
-    groupName: '',
-    timeRange: 24,
-    customers: [],
-    currentCustomer: null
-};
-
-// Initialize manual secret code finder
-function initSecretCodeSearch() {
-    console.log('🔍 Initializing Secret Code Search...');
-    
-    // Get DOM elements
-    const secretCodeSection = document.getElementById('secretCodeSection');
-    const backToSecretCodeBtn = document.getElementById('backToSecretCodeBtn');
-    const startSecretCodeSearchBtn = document.getElementById('startSecretCodeSearch');
-    const secretCodeInputPhase = document.getElementById('secretCodeInputPhase');
-    const secretCodeCustomerPhase = document.getElementById('secretCodeCustomerPhase');
-    const secretCodeMessagePhase = document.getElementById('secretCodeMessagePhase');
-    const backToCustomerListBtn = document.getElementById('backToCustomerListBtn');
-    const confirmSecretCodeBtn = document.getElementById('confirmSecretCodeBtn');
-    const markNotReceivedBtn = document.getElementById('markNotReceivedBtn');
-    
-    // Event listeners
-    backToSecretCodeBtn?.addEventListener('click', () => {
-        showSection('secretCode');
-    });
-    
-    // Secret code search button listener
-    
-    startSecretCodeSearchBtn?.addEventListener('click', startSecretCodeSearch);
-    backToCustomerListBtn?.addEventListener('click', backToCustomerList);
-    confirmSecretCodeBtn?.addEventListener('click', confirmSecretCode);
-    markNotReceivedBtn?.addEventListener('click', markNotReceived);
-    
-    // Populate group dropdown
-    populateSecretCodeGroupDropdown();
-}
-
-// Populate secret code group dropdown
-async function populateSecretCodeGroupDropdown() {
-    const secretCodeGroupSelect = document.getElementById('secretCodeGroupSelect');
-    if (!secretCodeGroupSelect) return;
-    
-    try {
-        let response = await fetch('/groups');
-        let data = await response.json();
-        
-        // If no groups loaded yet, trigger server-side load and retry once
-        if (!data.groups || data.groups.length === 0) {
-            try {
-                await fetch('/groups/load');
-                response = await fetch('/groups');
-                data = await response.json();
-            } catch (e) {
-                console.error('Failed to auto-load groups:', e);
-            }
-        }
-        
-        secretCodeGroupSelect.innerHTML = '<option value="">Select a group...</option>';
-        
-        if (data.groups && data.groups.length > 0) {
-            data.groups.forEach(group => {
-                const option = document.createElement('option');
-                option.value = group.name; // Use group name as value since that's what the server expects
-                option.textContent = group.name;
-                secretCodeGroupSelect.appendChild(option);
-            });
-        }
-    } catch (error) {
-        console.error('Error loading groups for secret code search:', error);
-    }
-}
-
-// Start secret code search
-async function startSecretCodeSearch() {
-    const secretCodeInput = document.getElementById('secretCodeInput');
-    const groupSelect = document.getElementById('secretCodeGroupSelect');
-    const timeRangeSelect = document.getElementById('secretCodeTimeRange');
-    
-    const secretCode = secretCodeInput.value.trim();
-    const groupName = groupSelect.value;
-    const timeRange = parseInt(timeRangeSelect.value);
-    
-    if (!secretCode) {
-        alert('Please enter a secret code to search for.');
-        return;
-    }
-    
-    if (!groupName) {
-        alert('Please select a group.');
-        return;
-    }
-    
-    console.log('🔍 Starting Secret Code Search:', {
-        secretCode,
-        groupName,
-        timeRange
-    });
-    
-    secretCodeSearchData.secretCode = secretCode;
-    secretCodeSearchData.groupName = groupName;
-    secretCodeSearchData.timeRange = timeRange;
-    
-    try {
-        // Show loading
-        const startBtn = document.getElementById('startSecretCodeSearch');
-        const originalText = startBtn.innerHTML;
-        startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading Customers...';
-        startBtn.disabled = true;
-        
-        // Get customers from the selected group (NO MESSAGE LOADING YET)
-        const group = currentGroups[groupName];
-        if (!group || !group.customers) {
-            alert('Group not found or has no customers.');
-            return;
-        }
-        
-        console.log('📋 Loading customers from group:', groupName, 'Count:', group.customers.length);
-        
-        // Just show the customer list without loading messages
-        secretCodeSearchData.customers = group.customers.map(customer => ({
-            phoneNumber: customer.phone,
-            name: customer.name,
-            messages: [], // Empty initially - will be loaded on demand
-            hasSecretCode: false // Will be determined when messages are loaded
-        }));
-        
-        console.log('✅ Customer list loaded:', secretCodeSearchData.customers.length, 'customers');
-            
-            // Show customer list
-            showCustomerList();
-        
-    } catch (error) {
-        console.error('❌ Error loading customers:', error);
-        alert('Error loading customers: ' + error.message);
-    } finally {
-        // Reset button
-        const startBtn = document.getElementById('startSecretCodeSearch');
-        startBtn.innerHTML = '<i class="fas fa-search"></i> Search Messages';
-        startBtn.disabled = false;
-    }
-}
-
-// Process customers from messages
-function processCustomersFromMessages(messages, secretCode) {
-    const customerMap = new Map();
-    
-    // Build lookup from current group to resolve names by phone
-    const group = currentGroups[secretCodeSearchData.groupName];
-    const phoneToName = new Map();
-    if (group && Array.isArray(group.customers)) {
-        group.customers.forEach(c => {
-            const clean = (c.phone || '').toString().replace(/\D/g, '');
-            if (clean) phoneToName.set(clean, c.name || '');
-        });
-    }
-    
-    messages.forEach(message => {
-        const keyPhone = (message.sourcePhone || '').toString().replace(/\D/g,'');
-        const rawFrom = message.from || '';
-        const cleanPhone = keyPhone || rawFrom.replace(/@.*/, '').replace(/\D/g, '');
-        const displayPhone = `${cleanPhone}@c.us`;
-        const resolvedName = phoneToName.get(cleanPhone) || message.customerName || message.senderName || 'Unknown';
-        
-        if (!customerMap.has(displayPhone)) {
-            customerMap.set(displayPhone, {
-                phoneNumber: displayPhone,
-                name: resolvedName,
-                messages: [],
-                hasSecretCode: false
-            });
-        }
-        
-        const customer = customerMap.get(displayPhone);
-        customer.messages.push(message);
-        
-        if (message.body && secretCode && message.body.toLowerCase().includes(secretCode.toLowerCase())) {
-            customer.hasSecretCode = true;
-        }
-    });
-    
-    return Array.from(customerMap.values());
-}
-
-// Show customer list
-function showCustomerList() {
-    const secretCodeInputPhase = document.getElementById('secretCodeInputPhase');
-    const secretCodeCustomerPhase = document.getElementById('secretCodeCustomerPhase');
-    const searchInfoText = document.getElementById('searchInfoText');
-    const customerList = document.getElementById('secretCodeCustomerList');
-    
-    // Update search info
-    searchInfoText.textContent = `Searching for "${secretCodeSearchData.secretCode}" in last ${secretCodeSearchData.timeRange} hours - Found ${secretCodeSearchData.customers.length} customers`;
-    
-    console.log('📋 Displaying customer list:', secretCodeSearchData.customers.length, 'customers');
-    
-    // Populate customer list
-    customerList.innerHTML = '';
-    
-    secretCodeSearchData.customers.forEach((customer, index) => {
-        // Safely get phoneNumber - use customer.phone if phoneNumber is missing
-        const phoneNumber = customer.phoneNumber || customer.phone || 'unknown';
-        
-        const customerItem = document.createElement('div');
-        customerItem.className = 'customer-item';
-        customerItem.setAttribute('data-phone', phoneNumber);
-        
-        // Check if customer is already confirmed (we'll update this after checking Google Sheets)
-        const isConfirmed = customer.isConfirmed || false;
-        const statusText = customer.hasSecretCode ? 
-            (isConfirmed ? '✓ Confirmed' : '✓ Potential Match') : 
-            'No Code Yet';
-        const statusClass = customer.hasSecretCode ? 
-            (isConfirmed ? 'confirmed' : 'has-code') : 
-            'no-code';
-        
-        customerItem.innerHTML = `
-            <div class="customer-info">
-                <div class="customer-name">${customer.name}</div>
-                <div class="customer-phone">${phoneNumber}</div>
-                <div class="customer-status">
-                    <span class="status-indicator ${statusClass}">
-                        ${statusText}
-                    </span>
-                </div>
-            </div>
-            <div class="customer-actions">
-                <button class="btn-view-messages" onclick="loadCustomerMessages('${phoneNumber}')">
-                    <i class="fas fa-comments"></i> View Messages
-                </button>
-            </div>
-        `;
-        customerList.appendChild(customerItem);
-    });
-    
-    // Show customer phase
-    secretCodeInputPhase.style.display = 'none';
-    secretCodeCustomerPhase.style.display = 'block';
-}
-
-// Load customer messages on demand
-async function loadCustomerMessages(phoneNumber) {
-    console.log('📱 Loading messages for customer:', phoneNumber);
-    
-    try {
-        // Find the customer
-        const customer = secretCodeSearchData.customers.find(c => c.phoneNumber === phoneNumber);
-        if (!customer) {
-            console.error('❌ Customer not found:', phoneNumber);
-            return;
-        }
-        
-        console.log('🔍 Fetching messages for:', customer.name, phoneNumber);
-        
-        // Show loading state
-        const customerItem = document.querySelector(`[data-phone="${phoneNumber}"]`);
-        const viewBtn = customerItem.querySelector('.btn-view-messages');
-        const originalText = viewBtn.innerHTML;
-        viewBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
-        viewBtn.disabled = true;
-        
-        // Fetch messages for this specific customer
-        const response = await fetch(`/messages/${phoneNumber}?days=${secretCodeSearchData.timeRange / 24}`);
-        console.log('📡 API Response status:', response.status);
-        
-        if (!response.ok) {
-            throw new Error(`Failed to fetch messages: ${response.status} ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        const messages = data.messages || [];
-        console.log('📨 Messages received:', messages.length, 'messages');
-        
-        // Process messages and check for secret code
-        customer.messages = messages;
-        
-        // Check each message for secret code with detailed logging
-        const secretCode = secretCodeSearchData.secretCode.toLowerCase();
-        console.log('🔍 Checking messages for secret code:', secretCode);
-        
-        let foundMatches = [];
-        customer.hasSecretCode = messages.some((msg, index) => {
-            let containsCode = false;
-            if (msg.body) {
-                const messageBody = msg.body.toLowerCase();
-                containsCode = messageBody.includes(secretCode);
-                if (containsCode) {
-                    foundMatches.push({
-                        index: index,
-                        body: msg.body,
-                        timestamp: msg.timestamp
-                    });
-                }
-                console.log(`📝 Message ${index}:`, {
-                    body: msg.body,
-                    containsCode: containsCode,
-                    searchTerm: secretCode
-                });
-            }
-            return containsCode;
-        });
-        
-        console.log('✅ Messages processed:', {
-            totalMessages: messages.length,
-            hasSecretCode: customer.hasSecretCode,
-            secretCode: secretCodeSearchData.secretCode,
-            foundMatches: foundMatches.length,
-            matchDetails: foundMatches
-        });
-        
-        // Update the customer item in the UI
-        updateCustomerItem(customer);
-        
-        // Show messages
-        showCustomerMessages(customer);
-        
-    } catch (error) {
-        console.error('❌ Error loading messages:', error);
-        alert('Failed to load messages: ' + error.message);
-    } finally {
-        // Reset button
-        const customerItem = document.querySelector(`[data-phone="${phoneNumber}"]`);
-        if (customerItem) {
-            const viewBtn = customerItem.querySelector('.btn-view-messages');
-            viewBtn.innerHTML = '<i class="fas fa-comments"></i> View Messages';
-            viewBtn.disabled = false;
-        }
-    }
-}
-
-// Update customer item in the UI
-function updateCustomerItem(customer) {
-    const customerItem = document.querySelector(`[data-phone="${customer.phoneNumber}"]`);
-    if (!customerItem) return;
-    
-    // Update status indicator
-    const statusIndicator = customerItem.querySelector('.status-indicator');
-    if (statusIndicator) {
-        const isConfirmed = customer.isConfirmed || false;
-        const statusText = customer.hasSecretCode ? 
-            (isConfirmed ? '✓ Confirmed' : '✓ Potential Match') : 
-            'No Code Yet';
-        const statusClass = customer.hasSecretCode ? 
-            (isConfirmed ? 'confirmed' : 'has-code') : 
-            'no-code';
-        
-        statusIndicator.className = `status-indicator ${statusClass}`;
-        statusIndicator.textContent = statusText;
-        
-        console.log('🔍 Updated customer status:', {
-            phoneNumber: customer.phoneNumber,
-            hasSecretCode: customer.hasSecretCode,
-            isConfirmed: isConfirmed,
-            statusText: statusText,
-            statusClass: statusClass
-        });
-    }
-}
-
-// Show customer messages
-function showCustomerMessages(customer) {
-    console.log('👁️ Showing messages for:', customer.name);
-    
-    const secretCodeCustomerPhase = document.getElementById('secretCodeCustomerPhase');
-    const secretCodeMessagePhase = document.getElementById('secretCodeMessagePhase');
-    const selectedCustomerInfo = document.getElementById('selectedCustomerInfo');
-    const messageList = document.getElementById('secretCodeMessageList');
-    
-    // Update customer info
-    selectedCustomerInfo.textContent = `${customer.name} (${customer.phoneNumber})`;
-    
-    // Populate messages
-    messageList.innerHTML = '';
-    
-    if (customer.messages.length === 0) {
-        messageList.innerHTML = '<div class="no-messages">No messages found for this customer.</div>';
-    } else {
-        customer.messages.forEach((message, messageIndex) => {
-        const messageItem = document.createElement('div');
-        messageItem.className = 'message-item';
-            
-            // Check if message contains secret code (case insensitive)
-            const hasSecretCode = message.body && message.body.toLowerCase().includes(secretCodeSearchData.secretCode.toLowerCase());
-            if (hasSecretCode) {
-                messageItem.classList.add('has-secret-code');
-            }
-        
-        // Highlight secret code matches
-        let messageContent = message.body || '';
-            if (messageContent && secretCodeSearchData.secretCode) {
-                const regex = new RegExp(`(${secretCodeSearchData.secretCode})`, 'gi');
-            messageContent = messageContent.replace(regex, '<span class="secret-code-match">$1</span>');
-        }
-        
-        messageItem.innerHTML = `
-            <div class="message-content">${messageContent}</div>
-            <div class="message-time">${new Date(message.timestamp * 1000).toLocaleString()}</div>
-                        <div class="secret-code-indicator">
-                            <span class="code-status ${hasSecretCode ? 'potential' : 'regular'}">${hasSecretCode ? '✓ Potential Match' : 'Regular Message'}</span>
-                            <button class="btn-confirm-code" onclick="confirmSecretCodeMatch('${customer.phoneNumber}', ${messageIndex}, this)">
-                                <i class="fas fa-check"></i> Confirm
-                            </button>
-                        </div>
-        `;
-        messageList.appendChild(messageItem);
-    });
-    }
-    
-    // Show message phase
-    secretCodeCustomerPhase.style.display = 'none';
-    secretCodeMessagePhase.style.display = 'block';
-}
-
-// Confirm secret code match and update Google Sheets
-async function confirmSecretCodeMatch(phoneNumber, messageIndex, element) {
-    try {
-        console.log('🎯 Confirming secret code match for:', phoneNumber, 'message index:', messageIndex);
-        
-        // Update Google Sheets
-        const result = await updateCustomerAttendance(phoneNumber, 'Y');
-        console.log('✅ Attendance updated successfully:', result);
-        
-        // Update the customer's confirmed status in the data
-        const customer = secretCodeSearchData.customers.find(c => c.phoneNumber === phoneNumber);
-        if (customer) {
-            customer.isConfirmed = true;
-        }
-        
-        // Update the UI to show it's confirmed
-        const confirmBtn = element || document.querySelector(`[onclick*="confirmSecretCodeMatch('${phoneNumber}', ${messageIndex})"]`);
-        if (confirmBtn) {
-            confirmBtn.innerHTML = '<i class="fas fa-check-circle"></i> Confirmed';
-            confirmBtn.disabled = true;
-            confirmBtn.style.backgroundColor = '#28a745';
-        }
-        
-        // Update the status indicator
-        const codeStatus = confirmBtn.parentElement.querySelector('.code-status');
-        if (codeStatus) {
-            codeStatus.textContent = '✓ Confirmed';
-            codeStatus.style.color = '#28a745';
-            codeStatus.style.fontWeight = 'bold';
-        }
-        
-        // Refresh the customer list to show updated status
-        showCustomerList();
-        
-        // Show success notification
-        showNotification(`Secret code confirmed for customer!`, 'success');
-        
-        // Auto-return to customer list after 2 seconds
-        setTimeout(() => {
-            backToCustomerList();
-        }, 2000);
-        
-    } catch (error) {
-        console.error('❌ Error confirming secret code match:', error);
-        showNotification('Failed to confirm secret code: ' + error.message, 'error');
-    }
-}
-
-// Mark customer as received
-async function markCustomerReceived(customerIndex) {
-    console.log('🎯 markCustomerReceived called with index:', customerIndex);
-    console.log('🎯 secretCodeSearchData.customers:', secretCodeSearchData.customers);
-    
-    try {
-        const customer = secretCodeSearchData.customers[customerIndex];
-        console.log('🎯 Marking customer as received:', customer.name, customer.phoneNumber);
-        
-        // Update Google Sheets
-        const result = await updateCustomerAttendance(customer.phoneNumber, 'Y');
-        console.log('✅ Attendance updated successfully:', result);
-        
-        // Update the customer's confirmed status in the data
-        customer.isConfirmed = true;
-        
-        // Refresh the customer list to show updated status
-        showCustomerList();
-        
-        // Show success notification
-        showNotification(`Customer ${customer.name} marked as received!`, 'success');
-        
-    } catch (error) {
-        console.error('❌ Error marking customer as received:', error);
-        showNotification('Failed to mark customer as received: ' + error.message, 'error');
-    }
-}
-
-// Back to customer list
-function backToCustomerList() {
-    const secretCodeCustomerPhase = document.getElementById('secretCodeCustomerPhase');
-    const secretCodeMessagePhase = document.getElementById('secretCodeMessagePhase');
-    
-    secretCodeMessagePhase.style.display = 'none';
-    secretCodeCustomerPhase.style.display = 'block';
-}
-
-// Confirm secret code
-async function confirmSecretCode() {
-    if (!secretCodeSearchData.currentCustomer) return;
-    
-    try {
-        await updateCustomerAttendance(secretCodeSearchData.currentCustomer.phoneNumber, 'Y');
-        alert('Customer marked as received in Google Sheets!');
-        
-        // Go back to customer list
-        backToCustomerList();
-        
-        // Update the customer in the list
-        const customerIndex = secretCodeSearchData.customers.findIndex(c => c.phoneNumber === secretCodeSearchData.currentCustomer.phoneNumber);
-        if (customerIndex !== -1) {
-            markCustomerReceived(customerIndex);
-        }
-        
-    } catch (error) {
-        console.error('Error updating attendance:', error);
-        alert('Error updating attendance: ' + error.message);
-    }
-}
-
-// Mark as not received
-async function markNotReceived() {
-    if (!secretCodeSearchData.currentCustomer) return;
-    
-    try {
-        await updateCustomerAttendance(secretCodeSearchData.currentCustomer.phoneNumber, 'N');
-        alert('Customer marked as not received in Google Sheets!');
-        
-        // Go back to customer list
-        backToCustomerList();
-        
-    } catch (error) {
-        console.error('Error updating attendance:', error);
-        alert('Error updating attendance: ' + error.message);
-    }
-}
-
-// Update customer attendance in Google Sheets
-async function updateCustomerAttendance(phoneNumber, status) {
-    try {
-        console.log('📊 Updating attendance for:', phoneNumber, 'to:', status, 'with secret code:', secretCodeSearchData.secretCode);
-        
-        const response = await fetch('/api/update-attendance', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                phoneNumber: phoneNumber,
-                status: status,
-                groupName: secretCodeSearchData.groupName,
-                secretCode: secretCodeSearchData.secretCode
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to update attendance');
-        }
-        
-        return await response.json();
-    } catch (error) {
-        console.error('Error updating attendance:', error);
-        throw error;
-    }
-}
-
-// Initialize manual secret code finder when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    initSecretCodeSearch();
-});
 

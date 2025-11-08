@@ -27,7 +27,7 @@
     "timezone": "Asia/Calcutta",
     "createdAt": "2025-11-07T11:49:27.070Z",
     "lastRunAt": null,
-    "nextRun": "2025-11-08T12:00:00.000Z",
+    "nextRun": "2025-11-09T12:00:00.000Z",
     "status": "active",
     "lastError": null,
     "updatedAt": "2025-11-08T10:31:31.355Z"
@@ -62,6 +62,33 @@
     "updatedAt": null,
     "lastRunAt": null,
     "nextRun": "2025-11-08T23:00:00.000Z",
+    "status": "active",
+    "lastError": null
+  },
+  {
+    "id": "sched_1762623307559_hbbd4y",
+    "groupName": "Test",
+    "message": "Good evening Ammu",
+    "mediaUrl": "",
+    "mediaType": null,
+    "mediaFilename": null,
+    "hasMedia": false,
+    "targetScope": "selected",
+    "selectedPhones": [
+      "919360487516"
+    ],
+    "recurrenceType": "once",
+    "weekdays": [],
+    "monthlyDay": null,
+    "startDate": "2025-11-08",
+    "startTime": "23:09",
+    "endDate": "2025-11-08",
+    "endTime": "23:09",
+    "timezone": "Asia/Calcutta",
+    "createdAt": "2025-11-08T17:35:07.559Z",
+    "updatedAt": null,
+    "lastRunAt": null,
+    "nextRun": "2025-11-08T17:39:00.000Z",
     "status": "active",
     "lastError": null
   }

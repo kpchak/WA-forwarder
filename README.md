@@ -10,7 +10,6 @@ A comprehensive WhatsApp web application for managing customer groups, forwardin
 - 📋 Customer Group Management via Google Sheets
 - 📤 Bulk message forwarding to groups
 - ✅ Attendance tracking and marking
-- 🔍 Secret code monitoring
 - 📋 Copy messages to clipboard for analysis
 - 📱 Responsive web interface
 - 🔒 Secure local authentication

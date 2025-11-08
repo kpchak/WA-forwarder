@@ -27,9 +27,6 @@
                 <button class="nav-btn" data-section="messages">
                     <i class="fas fa-comments"></i> <span class="nav-btn-text">Messages</span>
                 </button>
-                <button class="nav-btn" data-section="secretCode">
-                    <i class="fas fa-search"></i> <span class="nav-btn-text">Secret Code Search</span>
-                </button>
             </div>
 
             <!-- Connection Status -->
@@ -126,7 +123,7 @@
             <div class="text-filter-group">
                 <label>Text Filter:</label>
                 <div class="text-filter-input">
-                    <input type="text" id="textFilter" placeholder="Enter text to filter messages (e.g., 👍P, 👍C, Once Joined, Once Completed)" class="text-input">
+                    <input type="text" id="textFilter" placeholder="Enter text to filter messages (e.g., 👍P, 👍C, keywords)" class="text-input">
                     <div class="text-filter-actions">
                         <button id="applyTextFilter" class="btn btn-info">
                             <i class="fas fa-search"></i> Filter Text
@@ -137,7 +134,7 @@
                     </div>
                 </div>
                 <div class="text-filter-info">
-                    <small>Examples: 👍P, 👍C, "Once Joined", "Once Completed", or any text pattern</small>
+                    <small>Filter messages containing any text pattern. Useful for emojis, status codes, or phrases.</small>
                 </div>
             </div>
 
@@ -278,88 +275,6 @@
             </div>
 
 
-            <!-- Secret Code Search Section -->
-            <div class="secret-code-section" id="secretCodeSection" style="display: none;">
-                <div class="secret-code-header">
-                    <h2><i class="fas fa-search"></i> Secret Code Search</h2>
-                    <div class="header-actions">
-                        <button id="refreshSecretCodeBtn" class="btn btn-secondary">
-                            <i class="fas fa-refresh"></i> Refresh
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- Input Phase -->
-                <div class="secret-code-input-phase" id="secretCodeInputPhase">
-                    <div class="form-group">
-                        <label for="secretCodeInput">Secret Code to Search:</label>
-                        <input type="text" id="secretCodeInput" placeholder="Enter secret code (e.g., 'REPLY123')" class="form-control">
-                        <div class="form-check" style="margin-top: 8px;">
-                            <input type="checkbox" id="includeThumbsUp" class="form-check-input">
-                            <label for="includeThumbsUp" class="form-check-label">
-                                Include 👍 in secret code matching
-                            </label>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="secretCodeGroupSelect">Select Group:</label>
-                        <select id="secretCodeGroupSelect" class="form-control">
-                            <option value="">Select a group...</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="secretCodeTimeRange">Time Range:</label>
-                        <select id="secretCodeTimeRange" class="form-control">
-                            <option value="1">Last 1 hour</option>
-                            <option value="2">Last 2 hours</option>
-                            <option value="6">Last 6 hours</option>
-                            <option value="12">Last 12 hours</option>
-                            <option value="24" selected>Last 24 hours</option>
-                            <option value="48">Last 48 hours</option>
-                            <option value="168">Last 7 days</option>
-                        </select>
-                    </div>
-                    <div class="form-actions">
-                        <button id="startSecretCodeSearch" class="btn btn-primary">
-                            <i class="fas fa-search"></i> Search Messages
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Customer List Phase -->
-                <div class="secret-code-customer-phase" id="secretCodeCustomerPhase" style="display: none;">
-                    <div class="customer-list-header">
-                        <h3>Customer List - Secret Code Search Results</h3>
-                        <div class="search-info">
-                            <span id="searchInfoText"></span>
-                        </div>
-                    </div>
-                    <div class="customer-list-container">
-                        <div class="customer-list" id="secretCodeCustomerList">
-                            <!-- Customer list will be populated here -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Message Viewing Phase -->
-                <div class="secret-code-message-phase" id="secretCodeMessagePhase" style="display: none;">
-                    <div class="message-viewer-header">
-                        <h3>Message Viewer</h3>
-                        <div class="customer-info">
-                            <span id="selectedCustomerInfo"></span>
-                        </div>
-                        <button id="backToCustomerListBtn" class="btn btn-secondary">
-                            <i class="fas fa-arrow-left"></i> Back to Customer List
-                        </button>
-                    </div>
-                    <div class="message-viewer-container">
-                        <div class="message-list" id="secretCodeMessageList">
-                            <!-- Messages will be populated here -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- Group Message Section -->
             <div class="group-message-section" id="groupMessageSection" style="display: none;">
                 <div class="group-message-header">
@@ -418,36 +333,29 @@
                     <div class="form-group schedule-group">
                         <div class="schedule-edit-status" id="scheduleEditStatus" style="display: none;"></div>
                         <div class="schedule-toggle">
-                            <label for="enableSchedule">
-                                <input type="checkbox" id="enableSchedule">
-                                Schedule this message
-                            </label>
+                            <div class="schedule-toggle-header">
+                                <span class="schedule-toggle-title">
+                                    <i class="fas fa-calendar-alt"></i> Schedule this message
+                                </span>
+                                <div class="schedule-toggle-buttons">
+                                    <button type="button" id="showScheduleBtn" class="btn btn-outline-primary btn-sm">Show</button>
+                                    <button type="button" id="hideScheduleBtn" class="btn btn-outline-secondary btn-sm" style="display: none;">Hide</button>
+                                </div>
+                            </div>
                             <small class="schedule-hint">Plan recurring deliveries for this group.</small>
                         </div>
                         <div class="schedule-options" id="scheduleOptions" style="display: none;">
-                            <div class="schedule-row">
-                                <div class="schedule-field">
-                                    <label for="scheduleStartDate">Start Date</label>
-                                    <input type="date" id="scheduleStartDate" class="schedule-input">
-                                </div>
-                                <div class="schedule-field">
-                                    <label for="scheduleStartTime">Start Time</label>
-                                    <input type="time" id="scheduleStartTime" class="schedule-input">
-                                </div>
-                            </div>
-                            <div class="schedule-row">
-                                <div class="schedule-field">
-                                    <label for="scheduleEndDate">End Date</label>
-                                    <input type="date" id="scheduleEndDate" class="schedule-input">
-                                </div>
-                                <div class="schedule-field">
-                                    <label for="scheduleEndTime">End Time</label>
-                                    <input type="time" id="scheduleEndTime" class="schedule-input">
+                            <div class="schedule-section">
+                                <label>Recipients</label>
+                                <div class="schedule-recipients">
+                                    <label><input type="radio" id="scheduleRecipientsSelected" name="scheduleRecipients" value="selected" checked> Use selected recipients</label>
+                                    <label><input type="radio" id="scheduleRecipientsAll" name="scheduleRecipients" value="all"> Entire group</label>
                                 </div>
                             </div>
                             <div class="schedule-section">
                                 <label>Recurrence</label>
                                 <div class="recurrence-options">
+                                    <label><input type="radio" name="scheduleRecurrence" value="once"> Once</label>
                                     <label><input type="radio" name="scheduleRecurrence" value="daily" checked> Daily</label>
                                     <label><input type="radio" name="scheduleRecurrence" value="weekly"> Weekly</label>
                                     <label><input type="radio" name="scheduleRecurrence" value="monthly"> Monthly</label>
@@ -469,23 +377,44 @@
                                     <input type="number" id="scheduleMonthlyDay" class="schedule-input" min="1" max="31">
                                 </div>
                             </div>
-                            <div class="schedule-section">
-                                <label>Recipients</label>
-                                <div class="schedule-recipients">
-                                    <label><input type="radio" id="scheduleRecipientsSelected" name="scheduleRecipients" value="selected" checked> Use selected recipients</label>
-                                    <label><input type="radio" id="scheduleRecipientsAll" name="scheduleRecipients" value="all"> Entire group</label>
+                            <div class="schedule-section schedule-datetime">
+                                <div class="schedule-row">
+                                    <div class="schedule-field">
+                                        <label for="scheduleStartDate">Start Date</label>
+                                        <input type="date" id="scheduleStartDate" class="schedule-input">
+                                    </div>
+                                    <div class="schedule-field">
+                                        <label for="scheduleStartTime">Start Time</label>
+                                        <input type="time" id="scheduleStartTime" class="schedule-input">
+                                    </div>
+                                </div>
+                                <div class="schedule-row">
+                                    <div class="schedule-field">
+                                        <label for="scheduleEndDate">End Date</label>
+                                        <input type="date" id="scheduleEndDate" class="schedule-input">
+                                    </div>
+                                    <div class="schedule-field">
+                                        <label for="scheduleEndTime">End Time</label>
+                                        <input type="time" id="scheduleEndTime" class="schedule-input">
+                                    </div>
                                 </div>
                             </div>
                             <div class="schedule-actions">
-                                <button type="button" id="scheduleMessageBtn" class="btn btn-primary">
-                                    <i class="fas fa-calendar-alt"></i> Schedule Message
-                                </button>
+                                <div class="schedule-primary-actions">
+                                    <button type="button" id="scheduleMessageBtn" class="btn btn-primary">
+                                        <i class="fas fa-calendar-plus"></i> Schedule Message
+                                    </button>
+                                    <button type="button" id="manageSchedulesBtn" class="btn btn-info">
+                                        <i class="fas fa-list"></i> Manage Schedules
+                                    </button>
+                                </div>
                                 <button type="button" id="cancelScheduleEditBtn" class="btn btn-secondary" style="display: none;">
                                     <i class="fas fa-times-circle"></i> Cancel Edit
                                 </button>
-                                <button type="button" id="manageSchedulesBtn" class="btn btn-info">
-                                    <i class="fas fa-list"></i> Manage Schedules
-                                </button>
+                            </div>
+                            <div class="schedule-note">
+                                <i class="fas fa-clock"></i>
+                                <span>Dates and times use your local timezone.</span>
                             </div>
                         </div>
                     </div>

@@ -66,7 +66,6 @@ Open your browser and navigate to: `http://localhost:3000`
 - ✅ Media Support
 
 ### Advanced Features
-- ✅ Secret Code Monitoring
 - ✅ Google Sheets Integration
 - ✅ Real-time Updates via WebSocket
 - ✅ Message Copy to Clipboard
