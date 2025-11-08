@@ -49,11 +49,30 @@ const groupMessageInput = document.getElementById('groupMessageInput');
 const groupMediaInput = document.getElementById('groupMediaInput');
 const sendGroupMessageBtn = document.getElementById('sendGroupMessageBtn');
 const previewGroupBtn = document.getElementById('previewGroupBtn');
+const clearMessageBtn = document.getElementById('clearMessageBtn');
+const scheduleEditStatus = document.getElementById('scheduleEditStatus');
 const groupMessageResults = document.getElementById('groupMessageResults');
 const recipientsList = document.getElementById('recipientsList');
 const selectAllRecipientsBtn = document.getElementById('selectAllRecipientsBtn');
 const deselectAllRecipientsBtn = document.getElementById('deselectAllRecipientsBtn');
 const recipientCountBadge = document.getElementById('recipientCountBadge');
+const scheduleRecipientsSelected = document.getElementById('scheduleRecipientsSelected');
+const scheduleRecipientsAll = document.getElementById('scheduleRecipientsAll');
+const enableScheduleCheckbox = document.getElementById('enableSchedule');
+const scheduleOptions = document.getElementById('scheduleOptions');
+const scheduleStartDate = document.getElementById('scheduleStartDate');
+const scheduleStartTime = document.getElementById('scheduleStartTime');
+const scheduleEndDate = document.getElementById('scheduleEndDate');
+const scheduleEndTime = document.getElementById('scheduleEndTime');
+const scheduleWeeklyOptions = document.getElementById('scheduleWeeklyOptions');
+const scheduleMonthlyOptions = document.getElementById('scheduleMonthlyOptions');
+const scheduleMonthlyDay = document.getElementById('scheduleMonthlyDay');
+const scheduleMessageBtn = document.getElementById('scheduleMessageBtn');
+const cancelScheduleEditBtn = document.getElementById('cancelScheduleEditBtn');
+const manageSchedulesBtn = document.getElementById('manageSchedulesBtn');
+const refreshSchedulesBtn = document.getElementById('refreshSchedulesBtn');
+const scheduledMessagesContainer = document.getElementById('scheduledMessagesContainer');
+const scheduledMessagesList = document.getElementById('scheduledMessagesList');
 
 // Text filter elements (will be initialized in DOMContentLoaded)
 let textFilter, applyTextFilter, clearTextFilter;
@@ -96,6 +115,13 @@ let timeFilter = {
 let hoursFilterEnabled = false;
 let hoursFilterValue = 0;
 let customerFilterEnabled = false;
+let isEditingSchedule = false;
+let editingScheduleId = null;
+let editingScheduleData = null;
+let currentSchedules = [];
+let currentScheduleEditId = null;
+let currentGroupSchedules = [];
+let scheduledListVisible = false;
 
 // Message store for forwarding
 let messageStore = {};
@@ -522,8 +548,58 @@ function setupEventListeners() {
     backToGroupsBtn.addEventListener('click', () => showSection('groups'));
     sendGroupMessageBtn.addEventListener('click', sendGroupMessage);
     previewGroupBtn.addEventListener('click', previewGroupMessage);
+    if (clearMessageBtn) {
+        clearMessageBtn.addEventListener('click', () => {
+            if (groupMessageInput) {
+                groupMessageInput.value = '';
+                groupMessageInput.focus();
+            }
+            showNotification('Message cleared', 'info');
+        });
+    }
+
+    if (enableScheduleCheckbox && scheduleOptions) {
+        enableScheduleCheckbox.addEventListener('change', handleScheduleToggle);
+    }
+
+    document.querySelectorAll('input[name="scheduleRecurrence"]').forEach(radio => {
+        radio.addEventListener('change', updateScheduleRecurrenceUI);
+    });
+
+    if (scheduleStartDate) {
+        scheduleStartDate.addEventListener('change', handleScheduleStartChange);
+    }
+
+    if (scheduleMessageBtn) {
+        scheduleMessageBtn.addEventListener('click', scheduleGroupMessage);
+    }
+
+    if (cancelScheduleEditBtn) {
+        cancelScheduleEditBtn.addEventListener('click', () => exitScheduleEditMode(true));
+    }
+
+    if (manageSchedulesBtn) {
+        manageSchedulesBtn.addEventListener('click', toggleScheduledMessages);
+    }
+
+    if (refreshSchedulesBtn) {
+        refreshSchedulesBtn.addEventListener('click', () => {
+            if (!selectedGroup) {
+                showNotification('Select a group to view schedules first', 'error');
+                return;
+            }
+            loadSchedulesForGroup(selectedGroup);
+        });
+    }
+
     selectAllRecipientsBtn.addEventListener('click', selectAllRecipients);
     deselectAllRecipientsBtn.addEventListener('click', deselectAllRecipients);
+
+    initializeScheduleDefaults();
+    updateScheduleRecurrenceUI();
+    handleScheduleToggle(true);
+    updateScheduleControls();
+    renderScheduledMessages([]);
     
     // Emoji quick buttons event listeners
     document.querySelectorAll('.emoji-btn').forEach(button => {
@@ -1991,17 +2067,52 @@ function viewGroupDetails(groupName) {
     });
 }
 
-function sendMessageToGroup(groupName) {
-    selectedGroup = groupName;
-    
-    // Load group details to populate recipients list
+async function ensureGroupCustomersLoaded(groupName) {
     if (currentGroups[groupName]) {
-        const group = currentGroups[groupName];
-        displayGroupRecipients(group);
+        return currentGroups[groupName];
     }
-    
+
+    try {
+        const response = await fetch(`/groups/${encodeURIComponent(groupName)}`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch group ${groupName}`);
+        }
+        const data = await response.json();
+        if (data.success && data.group) {
+            currentGroups[groupName] = {
+                name: data.group.name,
+                customers: data.group.customers || [],
+                totalCustomers: data.group.totalCustomers || (data.group.customers ? data.group.customers.length : 0),
+                lastUpdated: data.group.lastUpdated || new Date().toISOString()
+            };
+            return currentGroups[groupName];
+        }
+    } catch (error) {
+        console.error('Error loading group details:', error);
+        showNotification(`Failed to load group ${groupName}`, 'error');
+    }
+
+    return null;
+}
+
+async function sendMessageToGroup(groupName) {
+    selectedGroup = groupName;
+    updateScheduleControls();
+
+    let group = currentGroups[groupName];
+    if (!group) {
+        group = await ensureGroupCustomersLoaded(groupName);
+        if (!group) {
+            return;
+        }
+    }
+
+    displayGroupRecipients(group);
+
     showSection('group-message');
     groupMessageSection.style.display = 'block';
+
+    await loadSchedulesForGroup(groupName);
 }
 
 function displayGroupRecipients(group) {
@@ -2214,6 +2325,668 @@ function previewGroupMessage() {
             document.body.removeChild(preview);
         }
     });
+}
+
+function initializeScheduleDefaults() {
+    if (!scheduleStartDate || !scheduleStartTime || !scheduleEndDate || !scheduleEndTime) {
+        return;
+    }
+
+    const now = new Date();
+    const defaultStart = new Date(now.getTime() + 5 * 60 * 1000);
+    const defaultEnd = new Date(defaultStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    if (!scheduleStartDate.value) {
+        scheduleStartDate.value = formatDateForInput(defaultStart);
+    }
+    if (!scheduleStartTime.value) {
+        scheduleStartTime.value = formatTimeForInput(defaultStart);
+    }
+    if (!scheduleEndDate.value) {
+        scheduleEndDate.value = formatDateForInput(defaultEnd);
+    }
+    if (!scheduleEndTime.value) {
+        scheduleEndTime.value = formatTimeForInput(defaultStart);
+    }
+
+    if (scheduleMonthlyDay && !scheduleMonthlyDay.value) {
+        scheduleMonthlyDay.value = defaultStart.getDate();
+    }
+
+    setWeeklyDefaultSelection(defaultStart.getDay());
+}
+
+function handleScheduleToggle(isInitializing = false) {
+    if (!enableScheduleCheckbox || !scheduleOptions) {
+        return;
+    }
+
+    const shouldShow = enableScheduleCheckbox.checked;
+    scheduleOptions.style.display = shouldShow ? 'block' : 'none';
+
+    if (shouldShow && !scheduleOptions.dataset.initialized) {
+        initializeScheduleDefaults();
+        scheduleOptions.dataset.initialized = 'true';
+    }
+
+    if (!shouldShow && !isInitializing) {
+        console.log('[SCHEDULE] Scheduling disabled by user');
+        if (currentScheduleEditId) {
+            cancelScheduleEdit();
+        }
+    }
+}
+
+function updateScheduleRecurrenceUI() {
+    if (!scheduleOptions) {
+        return;
+    }
+
+    const recurrence = getSelectedScheduleRecurrence();
+    if (scheduleWeeklyOptions) {
+        scheduleWeeklyOptions.style.display = recurrence === 'weekly' ? 'block' : 'none';
+        if (recurrence === 'weekly') {
+            const selectedDay = scheduleStartDate && scheduleStartDate.value
+                ? new Date(`${scheduleStartDate.value}T00:00`).getDay()
+                : new Date().getDay();
+            setWeeklyDefaultSelection(selectedDay);
+        }
+    }
+    if (scheduleMonthlyOptions) {
+        scheduleMonthlyOptions.style.display = recurrence === 'monthly' ? 'block' : 'none';
+        if (recurrence === 'monthly' && scheduleStartDate && scheduleStartDate.value && scheduleMonthlyDay && !scheduleMonthlyDay.value) {
+            const startDate = new Date(`${scheduleStartDate.value}T00:00`);
+            if (!Number.isNaN(startDate.getTime())) {
+                scheduleMonthlyDay.value = startDate.getDate();
+            }
+        }
+    }
+}
+
+function handleScheduleStartChange() {
+    if (!scheduleStartDate || !scheduleStartDate.value) {
+        return;
+    }
+
+    const startDate = new Date(`${scheduleStartDate.value}T00:00`);
+    if (Number.isNaN(startDate.getTime())) {
+        return;
+    }
+
+    if (scheduleMonthlyDay && !scheduleMonthlyDay.value) {
+        scheduleMonthlyDay.value = startDate.getDate();
+    }
+
+    setWeeklyDefaultSelection(startDate.getDay());
+}
+
+function setWeeklyDefaultSelection(dayNumber) {
+    const weeklyCheckboxes = document.querySelectorAll('.weekly-day-checkbox');
+    if (!weeklyCheckboxes.length) {
+        return;
+    }
+
+    const alreadySelected = Array.from(weeklyCheckboxes).some(cb => cb.checked);
+    if (alreadySelected) {
+        return;
+    }
+
+    weeklyCheckboxes.forEach(cb => {
+        cb.checked = Number(cb.value) === Number(dayNumber);
+    });
+}
+
+function getSelectedScheduleRecurrence() {
+    const selected = document.querySelector('input[name="scheduleRecurrence"]:checked');
+    return selected ? selected.value : 'daily';
+}
+
+function combineScheduleDateTime(dateStr, timeStr) {
+    if (!dateStr) {
+        return null;
+    }
+    let timeComponent = timeStr || '00:00';
+    if (timeComponent.length === 5) {
+        timeComponent += ':00';
+    }
+    return new Date(`${dateStr}T${timeComponent}`);
+}
+
+function formatDateForInput(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function formatTimeForInput(date) {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+}
+
+function formatLocalDateTime(isoString) {
+    if (!isoString) {
+        return 'N/A';
+    }
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) {
+        return isoString;
+    }
+    const formattedDate = formatDateForInput(date);
+    const formattedTime = formatTimeForInput(date);
+    return `${formattedDate} ${formattedTime}`;
+}
+
+function buildRecurrenceLabel(schedule) {
+    const recurrence = (schedule.recurrenceType || 'daily').toLowerCase();
+    if (recurrence === 'daily') {
+        return 'Daily';
+    }
+
+    if (recurrence === 'weekly') {
+        const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const weekdays = Array.isArray(schedule.weekdays) ? schedule.weekdays : [];
+        if (!weekdays.length) {
+            return 'Weekly';
+        }
+        const labels = weekdays
+            .map(day => weekdayNames[Number(day)] || null)
+            .filter(Boolean)
+            .join(', ');
+        return `Weekly (${labels})`;
+    }
+
+    if (recurrence === 'monthly') {
+        const day = schedule.monthlyDay || '1';
+        return `Monthly (Day ${day})`;
+    }
+
+    return 'Custom';
+}
+
+function buildRecipientsLabel(schedule) {
+    if (schedule.targetScope === 'all') {
+        return 'Entire group';
+    }
+
+    const count = schedule.selectedPhones ? schedule.selectedPhones.length : 0;
+    return count === 1 ? '1 selected recipient' : `${count} selected recipients`;
+}
+
+function updateScheduleControls() {
+    if (manageSchedulesBtn) {
+        manageSchedulesBtn.innerHTML = scheduledListVisible
+            ? '<i class="fas fa-eye-slash"></i> Hide Schedules'
+            : '<i class="fas fa-list"></i> Manage Schedules';
+    }
+
+    if (scheduledMessagesContainer) {
+        if (scheduledListVisible && selectedGroup) {
+            scheduledMessagesContainer.style.display = 'block';
+        } else {
+            scheduledMessagesContainer.style.display = 'none';
+        }
+    }
+}
+
+function renderScheduledMessages(schedules = []) {
+    currentSchedules = schedules;
+    currentGroupSchedules = schedules;
+
+    if (!scheduledMessagesContainer || !scheduledMessagesList) {
+        return;
+    }
+
+    if (!scheduledListVisible || !selectedGroup) {
+        scheduledMessagesContainer.style.display = 'none';
+        updateScheduleControls();
+        return;
+    }
+
+    scheduledMessagesContainer.style.display = 'block';
+    updateScheduleControls();
+    scheduledMessagesList.innerHTML = '';
+
+    if (!schedules.length) {
+        const empty = document.createElement('div');
+        empty.className = 'scheduled-empty';
+        empty.textContent = 'No scheduled messages for this group yet.';
+        scheduledMessagesList.appendChild(empty);
+        return;
+    }
+
+    schedules.forEach(schedule => {
+        const item = document.createElement('div');
+        item.className = 'scheduled-message-card';
+
+        const status = (schedule.status || 'active').toLowerCase();
+        const statusRow = document.createElement('div');
+        statusRow.className = 'scheduled-message-row';
+
+        const recurrenceLabel = document.createElement('strong');
+        recurrenceLabel.textContent = buildRecurrenceLabel(schedule);
+        statusRow.appendChild(recurrenceLabel);
+
+        const statusBadge = document.createElement('span');
+        statusBadge.className = `schedule-status-badge schedule-status-${status}`;
+        statusBadge.textContent = (schedule.status || 'active').toUpperCase();
+        statusRow.appendChild(statusBadge);
+
+        item.appendChild(statusRow);
+
+        const messageRow = document.createElement('div');
+        messageRow.className = 'scheduled-message-row';
+        messageRow.textContent = schedule.message || '(No text message)';
+        item.appendChild(messageRow);
+
+        if (schedule.mediaUrl) {
+            const mediaRow = document.createElement('div');
+            mediaRow.className = 'scheduled-message-row';
+            mediaRow.innerHTML = '<i class="fas fa-paperclip"></i> Includes media';
+            item.appendChild(mediaRow);
+        }
+
+        const recipientsRow = document.createElement('div');
+        recipientsRow.className = 'scheduled-message-row';
+        recipientsRow.innerHTML = `<span><i class="fas fa-users"></i> ${buildRecipientsLabel(schedule)}</span>`;
+        item.appendChild(recipientsRow);
+
+        const startDate = combineScheduleDateTime(schedule.startDate, schedule.startTime);
+        const endDate = combineScheduleDateTime(schedule.endDate, schedule.endTime);
+        const nextRun = schedule.nextRun ? formatLocalDateTime(schedule.nextRun) : 'N/A';
+        const lastRun = schedule.lastRunAt ? formatLocalDateTime(schedule.lastRunAt) : 'Never';
+
+        const timingRow = document.createElement('div');
+        timingRow.className = 'scheduled-message-row';
+        timingRow.innerHTML = `
+            <span><i class="fas fa-play-circle"></i> Start: ${startDate ? formatLocalDateTime(startDate.toISOString()) : 'N/A'}</span>
+            <span><i class="fas fa-stop-circle"></i> End: ${endDate ? formatLocalDateTime(endDate.toISOString()) : 'N/A'}</span>
+        `;
+        item.appendChild(timingRow);
+
+        const nextRow = document.createElement('div');
+        nextRow.className = 'scheduled-message-row';
+        nextRow.innerHTML = `
+            <span><i class="fas fa-clock"></i> Next run: ${nextRun}</span>
+            <span><i class="fas fa-history"></i> Last run: ${lastRun}</span>
+        `;
+        item.appendChild(nextRow);
+
+        if (schedule.lastError) {
+            const errorRow = document.createElement('div');
+            errorRow.className = 'scheduled-message-row';
+            errorRow.innerHTML = `<span style="color:#c0392b;"><i class="fas fa-exclamation-triangle"></i> Last error: ${schedule.lastError}</span>`;
+            item.appendChild(errorRow);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'scheduled-message-actions';
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-info btn-sm';
+        editBtn.innerHTML = '<i class="fas fa-edit"></i> Edit';
+        editBtn.addEventListener('click', () => enterScheduleEditMode(schedule));
+        actions.appendChild(editBtn);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-danger btn-sm';
+        deleteBtn.innerHTML = '<i class="fas fa-trash"></i> Delete';
+        deleteBtn.addEventListener('click', () => deleteSchedule(schedule.id));
+        actions.appendChild(deleteBtn);
+
+        item.appendChild(actions);
+        scheduledMessagesList.appendChild(item);
+    });
+}
+
+async function toggleScheduledMessages() {
+    if (!selectedGroup) {
+        showNotification('Select a group first to manage schedules', 'error');
+        return;
+    }
+
+    scheduledListVisible = !scheduledListVisible;
+    updateScheduleControls();
+
+    if (scheduledListVisible) {
+        await loadSchedulesForGroup(selectedGroup);
+    }
+}
+
+async function loadSchedulesForGroup(groupName) {
+    if (!groupName) {
+        renderScheduledMessages([]);
+        return;
+    }
+
+    try {
+        const response = await fetch(`/schedules?group=${encodeURIComponent(groupName)}`);
+        if (!response.ok) {
+            throw new Error('Failed to load schedules');
+        }
+        const data = await response.json();
+        if (data.success) {
+            renderScheduledMessages(data.schedules || []);
+        } else {
+            throw new Error(data.error || 'Failed to load schedules');
+        }
+    } catch (error) {
+        console.error('Error loading schedules:', error);
+        showNotification(`Failed to load schedules: ${error.message}`, 'error');
+        renderScheduledMessages([]);
+    }
+}
+
+function applySelectedPhonesToRecipients(phoneList = []) {
+    if (!recipientsList) {
+        return;
+    }
+
+    const phoneSet = new Set(phoneList.map(phone => phone.toString()));
+    const checkboxes = recipientsList.querySelectorAll('input[type="checkbox"]');
+
+    checkboxes.forEach(checkbox => {
+        const isChecked = phoneSet.has(checkbox.value.toString());
+        checkbox.checked = isChecked;
+        const parent = checkbox.closest('.recipient-item');
+        if (parent) {
+            if (isChecked) {
+                parent.classList.add('selected');
+            } else {
+                parent.classList.remove('selected');
+            }
+        }
+    });
+
+    updateRecipientCount();
+}
+
+async function enterScheduleEditMode(schedule) {
+    try {
+        if (!schedule) {
+            return;
+        }
+
+        const group = await ensureGroupCustomersLoaded(schedule.groupName);
+        if (!group) {
+            return;
+        }
+
+        await sendMessageToGroup(schedule.groupName);
+
+        isEditingSchedule = true;
+        editingScheduleId = schedule.id;
+        editingScheduleData = schedule;
+
+        if (groupMessageInput) {
+            groupMessageInput.value = schedule.message || '';
+        }
+        if (groupMediaInput) {
+            groupMediaInput.value = schedule.mediaUrl || '';
+        }
+
+        if (enableScheduleCheckbox && !enableScheduleCheckbox.checked) {
+            enableScheduleCheckbox.checked = true;
+        }
+        handleScheduleToggle();
+
+        if (scheduleStartDate) scheduleStartDate.value = schedule.startDate || '';
+        if (scheduleStartTime) scheduleStartTime.value = schedule.startTime || '';
+        if (scheduleEndDate) scheduleEndDate.value = schedule.endDate || '';
+        if (scheduleEndTime) scheduleEndTime.value = schedule.endTime || '';
+
+        const recurrence = schedule.recurrenceType || 'daily';
+        document.querySelectorAll('input[name="scheduleRecurrence"]').forEach(radio => {
+            radio.checked = radio.value === recurrence;
+        });
+        updateScheduleRecurrenceUI();
+
+        if (recurrence === 'weekly' && scheduleWeeklyOptions) {
+            const selected = new Set((schedule.weekdays || []).map(Number));
+            scheduleWeeklyOptions.querySelectorAll('.weekly-day-checkbox').forEach(cb => {
+                cb.checked = selected.has(Number(cb.value));
+            });
+        }
+
+        if (recurrence === 'monthly' && scheduleMonthlyDay) {
+            scheduleMonthlyDay.value = schedule.monthlyDay || '';
+        }
+
+        if (schedule.targetScope === 'all') {
+            if (scheduleRecipientsAll) scheduleRecipientsAll.checked = true;
+            if (scheduleRecipientsSelected) scheduleRecipientsSelected.checked = false;
+            selectAllRecipients();
+        } else {
+            if (scheduleRecipientsSelected) scheduleRecipientsSelected.checked = true;
+            if (scheduleRecipientsAll) scheduleRecipientsAll.checked = false;
+            applySelectedPhonesToRecipients(schedule.selectedPhones || []);
+        }
+
+        if (scheduleMessageBtn) {
+            scheduleMessageBtn.innerHTML = '<i class="fas fa-save"></i> Update Schedule';
+        }
+        if (cancelScheduleEditBtn) {
+            cancelScheduleEditBtn.style.display = 'inline-flex';
+        }
+
+        showNotification('Editing scheduled message loaded.', 'info');
+    } catch (error) {
+        console.error('Error entering schedule edit mode:', error);
+        showNotification('Failed to load schedule for editing', 'error');
+    }
+}
+
+function exitScheduleEditMode(showMessage = false) {
+    isEditingSchedule = false;
+    editingScheduleId = null;
+    editingScheduleData = null;
+
+    if (scheduleMessageBtn) {
+        scheduleMessageBtn.innerHTML = '<i class="fas fa-calendar-alt"></i> Schedule Message';
+    }
+    if (cancelScheduleEditBtn) {
+        cancelScheduleEditBtn.style.display = 'none';
+    }
+
+    if (showMessage) {
+        showNotification('Cancelled schedule edit', 'info');
+    }
+}
+
+async function deleteSchedule(scheduleId) {
+    try {
+        if (!scheduleId) return;
+        const confirmed = window.confirm('Delete this scheduled message?');
+        if (!confirmed) return;
+
+        const response = await fetch(`/schedules/${encodeURIComponent(scheduleId)}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to delete schedule');
+        }
+
+        if (editingScheduleId === scheduleId) {
+            exitScheduleEditMode();
+        }
+
+        showNotification('Scheduled message deleted', 'success');
+        await loadSchedulesForGroup(selectedGroup);
+    } catch (error) {
+        console.error('Error deleting schedule:', error);
+        showNotification(`Failed to delete schedule: ${error.message}`, 'error');
+    }
+}
+
+async function scheduleGroupMessage() {
+    try {
+        if (!selectedGroup) {
+            showNotification('No group selected', 'error');
+            return;
+        }
+
+        if (!enableScheduleCheckbox || !enableScheduleCheckbox.checked) {
+            showNotification('Enable scheduling first', 'error');
+            return;
+        }
+
+        const message = groupMessageInput ? groupMessageInput.value.trim() : '';
+        const mediaUrl = groupMediaInput ? groupMediaInput.value.trim() : '';
+
+        if (!message && !mediaUrl) {
+            showNotification('Please enter a message or media URL', 'error');
+            return;
+        }
+
+        if (!scheduleStartDate || !scheduleStartTime || !scheduleEndDate || !scheduleEndTime) {
+            showNotification('Schedule fields are missing', 'error');
+            return;
+        }
+
+        const startDate = scheduleStartDate.value;
+        const startTime = scheduleStartTime.value;
+        const endDate = scheduleEndDate.value;
+        const endTime = scheduleEndTime.value;
+
+        if (!startDate || !startTime || !endDate || !endTime) {
+            showNotification('Start and end date/time are required', 'error');
+            return;
+        }
+
+        const startDateTime = combineScheduleDateTime(startDate, startTime);
+        const endDateTime = combineScheduleDateTime(endDate, endTime);
+
+        if (!startDateTime || !endDateTime || Number.isNaN(startDateTime.getTime()) || Number.isNaN(endDateTime.getTime())) {
+            showNotification('Invalid schedule date/time', 'error');
+            return;
+        }
+
+        const now = new Date();
+        if (!isEditingSchedule && startDateTime <= now) {
+            showNotification('Start time must be in the future', 'error');
+            return;
+        }
+
+        if (endDateTime <= startDateTime) {
+            showNotification('End time must be after the start time', 'error');
+            return;
+        }
+
+        const recurrenceType = getSelectedScheduleRecurrence();
+        let weekdays = [];
+        let monthlyDay = null;
+
+        if (recurrenceType === 'weekly') {
+            weekdays = Array.from(document.querySelectorAll('.weekly-day-checkbox:checked')).map(cb => Number(cb.value));
+            if (weekdays.length === 0) {
+                showNotification('Select at least one weekday', 'error');
+                return;
+            }
+        }
+
+        if (recurrenceType === 'monthly') {
+            if (scheduleMonthlyDay && scheduleMonthlyDay.value) {
+                monthlyDay = parseInt(scheduleMonthlyDay.value, 10);
+            } else {
+                monthlyDay = startDateTime.getDate();
+            }
+
+            if (Number.isNaN(monthlyDay) || monthlyDay < 1 || monthlyDay > 31) {
+                showNotification('Enter a valid day of the month (1-31)', 'error');
+                return;
+            }
+        }
+
+        const targetScopeRadio = document.querySelector('input[name="scheduleRecipients"]:checked');
+        const targetScope = targetScopeRadio ? targetScopeRadio.value : 'selected';
+
+        let selectedPhones = [];
+        if (targetScope === 'selected') {
+            if (!recipientsList) {
+                showNotification('Recipients list not loaded yet', 'error');
+                return;
+            }
+            const selectedCheckboxes = recipientsList.querySelectorAll('input[type="checkbox"]:checked');
+            selectedPhones = Array.from(selectedCheckboxes).map(cb => cb.value);
+            if (selectedPhones.length === 0) {
+                showNotification('Select at least one recipient to schedule', 'error');
+                return;
+            }
+        }
+
+        const isEditing = isEditingSchedule && editingScheduleId;
+        const endpoint = isEditing ? `/schedules/${encodeURIComponent(editingScheduleId)}` : `/groups/${encodeURIComponent(selectedGroup)}/schedule`;
+        const method = isEditing ? 'PUT' : 'POST';
+
+        let mediaType = editingScheduleData?.mediaType || null;
+        let mediaFilename = editingScheduleData?.mediaFilename || null;
+        const hasMediaFlag = !!mediaUrl;
+
+        const payload = {
+            message,
+            mediaUrl,
+            mediaType,
+            mediaFilename,
+            hasMedia: hasMediaFlag,
+            targetScope,
+            selectedPhones,
+            schedule: {
+                startDate,
+                startTime,
+                endDate,
+                endTime,
+                recurrenceType,
+                weekdays,
+                monthlyDay
+            }
+        };
+
+        if (scheduleMessageBtn) {
+            scheduleMessageBtn.disabled = true;
+            scheduleMessageBtn.innerHTML = isEditing
+                ? '<i class="fas fa-spinner fa-spin"></i> Updating...'
+                : '<i class="fas fa-spinner fa-spin"></i> Scheduling...';
+        }
+
+        const response = await fetch(endpoint, {
+            method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            const nextRunMessage = data.nextRun ? formatLocalDateTime(data.nextRun) : 'scheduled';
+            const successText = isEditing ? 'Schedule updated successfully' : 'Message scheduled successfully';
+            showNotification(`${successText}. Next run: ${nextRunMessage}`, 'success');
+            if (isEditing) {
+                exitScheduleEditMode();
+            }
+            await loadSchedulesForGroup(selectedGroup);
+        } else {
+            const errorMessage = data && data.error ? data.error : 'Failed to schedule message';
+            showNotification(errorMessage, 'error');
+            console.error('[SCHEDULE] Schedule request failed:', data);
+        }
+    } catch (error) {
+        console.error('Error scheduling group message:', error);
+        showNotification('Unexpected error while scheduling message', 'error');
+    } finally {
+        if (scheduleMessageBtn) {
+            scheduleMessageBtn.disabled = false;
+            if (isEditingSchedule && editingScheduleId) {
+                scheduleMessageBtn.innerHTML = '<i class="fas fa-save"></i> Update Schedule';
+            } else {
+                scheduleMessageBtn.innerHTML = '<i class="fas fa-calendar-alt"></i> Schedule Message';
+            }
+        }
+    }
 }
 
 async function markAttendance(groupName, customerPhone, status, message = '') {
@@ -2431,6 +3204,13 @@ function applyTextFilterToMessages() {
             return;
         }
         
+        console.log('[TEXT FILTER] Applying text filter', {
+            filterText,
+            totalMessages: messagesContainer ? messagesContainer.querySelectorAll('.message').length : 0,
+            textFilterEnabled,
+            previousPattern: textFilterPattern
+        });
+
         // Store filter settings
         textFilterEnabled = true;
         textFilterPattern = filterText.toLowerCase();
@@ -2454,6 +3234,11 @@ function clearTextFilterFromMessages() {
             return;
         }
         
+        console.log('[TEXT FILTER] Clearing text filter', {
+            previousPattern: textFilterPattern,
+            totalMessages: messagesContainer ? messagesContainer.querySelectorAll('.message').length : 0
+        });
+
         textFilterEnabled = false;
         textFilterPattern = '';
         textFilter.value = '';
@@ -2484,24 +3269,43 @@ function filterMessagesByText() {
         let visibleCount = 0;
         let hiddenCount = 0;
         
+        console.log('[TEXT FILTER] Filtering messages', {
+            pattern: textFilterPattern,
+            messageCount: messageElements.length
+        });
+
         messageElements.forEach(messageElement => {
-            const messageTextElement = messageElement.querySelector('.message-text');
-            const messageBody = messageTextElement ? messageTextElement.textContent.toLowerCase() : '';
+            const messageTextElement = messageElement.querySelector('.message-text') || messageElement.querySelector('.message-body');
+            let messageBody = '';
+            if (messageTextElement) {
+                messageBody = (messageTextElement.textContent || '').toLowerCase();
+            } else {
+                messageBody = (messageElement.textContent || '').toLowerCase();
+            }
             
             // Get current display status to preserve other filters
             const currentDisplay = messageElement.style.display;
             
             if (currentDisplay !== 'none') {
+                const messageId = messageElement.getAttribute('data-message-id') || 'unknown';
                 if (messageBody.includes(textFilterPattern)) {
                     messageElement.style.display = 'block';
                     visibleCount++;
+                    console.log('[TEXT FILTER] Match', { messageId, snippet: messageBody.slice(0, 80) });
                 } else {
                     messageElement.style.display = 'none';
                     hiddenCount++;
+                    console.log('[TEXT FILTER] Hidden', { messageId, snippet: messageBody.slice(0, 80) });
                 }
             }
         });
         
+        console.log('[TEXT FILTER] Filter result', {
+            pattern: textFilterPattern,
+            visibleCount,
+            hiddenCount
+        });
+
         showNotification(`Showing ${visibleCount} messages containing "${textFilterPattern}" (${hiddenCount} hidden)`, 'info');
     } catch (error) {
         console.error('Error filtering messages by text:', error);

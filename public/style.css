@@ -142,6 +142,12 @@ header p {
     gap: 8px;
 }
 
+.btn-sm {
+    padding: 8px 14px;
+    font-size: 0.9rem;
+    border-radius: 6px;
+}
+
 .btn-primary {
     background: #007bff;
     color: white;
@@ -1239,6 +1245,379 @@ header p {
 .form-actions {
     display: flex;
     gap: 10px;
+}
+
+.schedule-group {
+    margin-top: 20px;
+}
+
+.schedule-edit-status {
+    margin-bottom: 10px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: #e0f3ff;
+    color: #0d6efd;
+    font-weight: 600;
+    display: none;
+    align-items: center;
+    gap: 8px;
+}
+
+.schedule-edit-status i {
+    color: #0b5ed7;
+}
+
+.schedule-toggle {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-weight: 600;
+    color: #333;
+}
+
+.schedule-toggle input {
+    margin-right: 8px;
+}
+
+.schedule-hint {
+    color: #6c757d;
+    font-size: 0.85rem;
+}
+
+.schedule-options {
+    margin-top: 12px;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 15px;
+    background: #f8faff;
+}
+
+.schedule-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 12px;
+}
+
+.schedule-field {
+    flex: 1;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.schedule-field label {
+    font-weight: 600;
+    color: #444;
+}
+
+.schedule-input {
+    padding: 10px;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+    font-size: 0.95rem;
+}
+
+.schedule-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.schedule-section {
+    margin-top: 12px;
+}
+
+.recurrence-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin: 8px 0 10px;
+}
+
+.recurrence-options label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+}
+
+.weekly-options {
+    margin-top: 8px;
+}
+
+.weekly-label {
+    font-size: 0.85rem;
+    color: #555;
+}
+
+.weekly-days {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.weekly-days label {
+    background: #e9ecef;
+    padding: 6px 10px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.weekly-days input {
+    margin: 0;
+}
+
+.monthly-options {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 200px;
+}
+
+.schedule-recipients {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-top: 8px;
+    color: #444;
+}
+
+.schedule-recipients label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.schedule-actions {
+    margin-top: 15px;
+}
+
+.schedule-actions .btn {
+    width: 100%;
+    justify-content: center;
+}
+
+@media (min-width: 600px) {
+    .schedule-actions .btn {
+        width: auto;
+    }
+}
+
+.scheduled-messages-container {
+    margin-top: 20px;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 15px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.scheduled-messages-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.scheduled-messages-title {
+    margin: 0;
+    font-size: 1rem;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.scheduled-messages-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.scheduled-message-card {
+    border: 1px solid #e3e6f0;
+    border-radius: 8px;
+    padding: 12px;
+    background: #f8faff;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.scheduled-message-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 0.9rem;
+    color: #4a4a4a;
+}
+
+.scheduled-message-row strong {
+    color: #333;
+}
+
+.scheduled-message-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.scheduled-empty {
+    text-align: center;
+    color: #6c757d;
+    padding: 20px;
+    border: 1px dashed #ced4da;
+    border-radius: 8px;
+    background: #fefefe;
+}
+
+.schedule-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.schedule-status-active {
+    background: #d4edda;
+    color: #155724;
+}
+
+.schedule-status-completed {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.schedule-status-error {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.scheduled-messages-container {
+    margin-top: 20px;
+    border: 1px solid #dee2e6;
+    border-radius: 10px;
+    background: #ffffff;
+    padding: 16px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.scheduled-messages-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.scheduled-messages-title {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.scheduled-messages-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.scheduled-message-item {
+    border: 1px solid #e3e7ed;
+    border-radius: 8px;
+    padding: 12px;
+    background: #f9fbff;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.scheduled-message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.scheduled-message-item.active {
+    border-left: 4px solid #007bff;
+}
+
+.scheduled-message-item.completed {
+    opacity: 0.7;
+}
+
+.scheduled-message-main {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.scheduled-message-text {
+    font-weight: 600;
+    color: #2d3748;
+    word-break: break-word;
+}
+
+.scheduled-message-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 0.85rem;
+    color: #5a6474;
+}
+
+.scheduled-message-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.scheduled-tag {
+    background: #e9ecef;
+    border-radius: 12px;
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    color: #495057;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.scheduled-message-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.scheduled-empty {
+    text-align: center;
+    padding: 16px;
+    color: #6c757d;
+    background: #f8f9fa;
+    border: 1px dashed #dee2e6;
+    border-radius: 8px;
+}
+
+.btn.btn-sm {
+    padding: 8px 14px;
+    font-size: 0.9rem;
 }
 
 .group-message-results {

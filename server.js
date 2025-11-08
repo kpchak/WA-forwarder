@@ -6,6 +6,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const { google } = require('googleapis');
 
 const app = express();
@@ -54,6 +55,13 @@ const GOOGLE_SHEETS_CONFIG = {
 // Customer groups storage
 let customerGroups = {};
 let attendanceData = {}; // Format: { "groupName": { "customerPhone": { "YYYY-MM": [{dates}, ...] } } }
+
+// Scheduling
+const SCHEDULE_FILE_PATH = path.join(__dirname, 'scheduled-messages.json');
+const SCHEDULE_CHECK_INTERVAL = 60 * 1000; // 1 minute
+let scheduledMessages = [];
+let scheduleChecker = null;
+let isProcessingSchedules = false;
 
 // WhatsApp client events
 client.on('qr', (qr) => {
@@ -1683,156 +1691,250 @@ app.get('/groups/:groupName', (req, res) => {
 app.post('/groups/:groupName/send', async (req, res) => {
   try {
     const groupName = req.params.groupName;
-    const { message, mediaUrl, mediaType, mediaFilename, hasMedia, selectedPhones } = req.body;
-    
-    console.log('Forward request received:', {
-      groupName,
-      hasMessage: !!message,
-      hasMedia: hasMedia,
-      mediaType,
-      mediaFilename,
-      mediaUrlLength: mediaUrl ? mediaUrl.length : 0,
-      selectedPhonesCount: selectedPhones ? selectedPhones.length : 'all'
+    const result = await sendGroupMessageInternal(groupName, {
+      message: req.body.message,
+      mediaUrl: req.body.mediaUrl,
+      mediaType: req.body.mediaType,
+      mediaFilename: req.body.mediaFilename,
+      hasMedia: req.body.hasMedia,
+      selectedPhones: req.body.selectedPhones
     });
-    
-    if (!message && !mediaUrl) {
-      return res.status(400).json({
-        success: false,
-        error: 'Message content is required'
-      });
+
+    if (result.status === 'validation_error') {
+      return res.status(400).json({ success: false, error: result.error });
     }
 
-    const group = customerGroups[groupName];
-    if (!group) {
-      return res.status(404).json({
-        success: false,
-        error: 'Group not found'
-      });
+    if (result.status === 'not_found') {
+      return res.status(404).json({ success: false, error: result.error });
     }
 
-    if (!isClientReady) {
-      return res.status(400).json({
-        success: false,
-        error: 'WhatsApp client not ready'
-      });
+    if (result.status === 'client_not_ready') {
+      return res.status(400).json({ success: false, error: result.error });
     }
 
-    const results = [];
-    let successCount = 0;
-    let errorCount = 0;
-
-    // Filter customers if selectedPhones is provided
-    let customersToMessage = group.customers;
-    if (selectedPhones && Array.isArray(selectedPhones) && selectedPhones.length > 0) {
-      customersToMessage = group.customers.filter(customer => 
-        selectedPhones.includes(customer.phone)
-      );
-      console.log(`Filtering to ${customersToMessage.length} selected customers out of ${group.customers.length} total`);
+    if (result.status === 'error') {
+      throw result.error || new Error('Failed to send group message');
     }
 
-    // Send message to each selected customer
-    for (const customer of customersToMessage) {
-      try {
-        // Determine chat ID based on whether it's a group or contact
-        let chatId;
-        if (customer.phone.includes('@g.us') || customer.phone.includes('@c.us')) {
-          // Already has the correct suffix
-          chatId = customer.phone;
-        } else {
-          // Regular contact - add @c.us suffix
-          chatId = `${customer.phone}@c.us`;
-        }
-        
-        console.log(`Getting chat for ID: ${chatId}, isGroup: ${customer.phone.includes('@g.us')}`);
-        const chat = await client.getChatById(chatId);
-        
-        if (hasMedia && mediaUrl && mediaType) {
-          console.log(`Sending media to ${customer.phone}:`, {
-            mediaType,
-            mediaFilename,
-            isBase64: mediaUrl.startsWith('data:'),
-            mediaSize: mediaUrl.length
-          });
-          
-          // Handle base64 media data
-          if (mediaUrl.startsWith('data:')) {
-            // Extract base64 data from data URL
-            const base64Data = mediaUrl.split(',')[1];
-            const buffer = Buffer.from(base64Data, 'base64');
-            
-            // Create a temporary file path
-            const fs = require('fs');
-            const path = require('path');
-            const tempDir = path.join(__dirname, 'temp');
-            
-            // Ensure temp directory exists
-            if (!fs.existsSync(tempDir)) {
-              fs.mkdirSync(tempDir, { recursive: true });
-            }
-            
-            const tempFilePath = path.join(tempDir, `${Date.now()}_${mediaFilename || 'media'}`);
-            fs.writeFileSync(tempFilePath, buffer);
-            
-            try {
-              // Send media with caption using MessageMedia
-              const mediaMessage = new MessageMedia(mediaType, base64Data);
-              await chat.sendMessage(mediaMessage, { caption: message });
-            } catch (error) {
-              console.error('Error sending media message:', error);
-              // Fallback: try sending as regular message with media URL
-              await chat.sendMessage(message);
-            } finally {
-              // Clean up temp file
-              if (fs.existsSync(tempFilePath)) {
-                fs.unlinkSync(tempFilePath);
-              }
-            }
-          } else {
-            // Regular URL
-            await chat.sendMessage(mediaUrl, { caption: message });
-          }
-        } else {
-          // Send text message
-          await chat.sendMessage(message);
-        }
-        
-        successCount++;
-        results.push({
-          phone: customer.phone,
-          name: customer.name,
-          status: 'sent',
-          timestamp: new Date().toISOString()
-        });
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
-        errorCount++;
-        results.push({
-          phone: customer.phone,
-          name: customer.name,
-          status: 'failed',
-          error: error.message,
-          timestamp: new Date().toISOString()
-        });
-        console.error(`Failed to send message to ${customer.name} (${customer.phone}):`, error);
-      }
-    }
-
-    res.json({
+    return res.json({
       success: true,
-      groupName: groupName,
-      totalCustomers: customersToMessage.length,
-      successCount: successCount,
-      errorCount: errorCount,
-      results: results,
-      message: `Message sent to ${successCount} out of ${customersToMessage.length} selected customers`
+      groupName,
+      totalCustomers: result.targetedCustomers,
+      successCount: result.successCount,
+      errorCount: result.errorCount,
+      results: result.results,
+      message: `Message sent to ${result.successCount} out of ${result.targetedCustomers} selected customers`
     });
   } catch (error) {
     console.error('Error sending group message:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to send group message',
+      details: error.message
+    });
+  }
+});
+
+// Schedule a group message
+app.post('/groups/:groupName/schedule', async (req, res) => {
+  try {
+    const groupName = req.params.groupName;
+
+    await ensureGroupData();
+    const group = customerGroups[groupName];
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found' });
+    }
+
+    const validation = validateSchedulePayload(group, req.body, null, { requireFutureStart: true });
+    if (validation.error) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+
+    const value = validation.value;
+
+    const scheduleEntry = {
+      id: `sched_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      groupName,
+      message: value.message,
+      mediaUrl: value.mediaUrl,
+      mediaType: value.mediaType,
+      mediaFilename: value.mediaFilename,
+      hasMedia: value.hasMedia,
+      targetScope: value.targetScope,
+      selectedPhones: value.targetScope === 'selected' ? value.selectedPhones : [],
+      recurrenceType: value.recurrenceType,
+      weekdays: value.weekdays,
+      monthlyDay: value.monthlyDay,
+      startDate: value.startDate,
+      startTime: value.startTime,
+      endDate: value.endDate,
+      endTime: value.endTime,
+      timezone: value.timezone,
+      createdAt: new Date().toISOString(),
+      updatedAt: null,
+      lastRunAt: null,
+      nextRun: null,
+      status: 'active',
+      lastError: null
+    };
+
+    const nextRun = computeNextRunForSchedule(scheduleEntry);
+    if (!nextRun) {
+      return res.status(400).json({
+        success: false,
+        error: 'Schedule configuration does not produce a run within the selected window'
+      });
+    }
+
+    scheduleEntry.nextRun = nextRun.toISOString();
+
+    scheduledMessages.push(scheduleEntry);
+    saveScheduledMessages();
+
+    console.log(`[SCHEDULE] Created schedule ${scheduleEntry.id} for group ${groupName}. Next run at ${scheduleEntry.nextRun}`);
+
+    if (!scheduleChecker) {
+      startScheduleChecker();
+    }
+
+    processScheduledMessages().catch(err => console.error('[SCHEDULE] Immediate scheduler run error:', err));
+
+    res.json({
+      success: true,
+      scheduleId: scheduleEntry.id,
+      nextRun: scheduleEntry.nextRun,
+      status: scheduleEntry.status
+    });
+  } catch (error) {
+    console.error('[SCHEDULE] Error creating schedule:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create schedule',
+      details: error.message
+    });
+  }
+});
+
+// Get scheduled messages (optional group filter)
+app.get('/schedules', (req, res) => {
+  try {
+    const groupFilter = req.query.group || req.query.groupName || null;
+    let schedules = scheduledMessages.slice();
+
+    if (groupFilter) {
+      schedules = schedules.filter(schedule => schedule.groupName === groupFilter);
+    }
+
+    schedules.sort((a, b) => {
+      const aTime = a.nextRun ? new Date(a.nextRun).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b.nextRun ? new Date(b.nextRun).getTime() : Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
+
+    res.json({ success: true, schedules });
+  } catch (error) {
+    console.error('[SCHEDULE] Error fetching schedules:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch schedules',
+      details: error.message
+    });
+  }
+});
+
+// Update an existing scheduled message
+app.put('/schedules/:scheduleId', async (req, res) => {
+  try {
+    const scheduleId = req.params.scheduleId;
+    const scheduleIndex = scheduledMessages.findIndex(schedule => schedule.id === scheduleId);
+
+    if (scheduleIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    const existingSchedule = scheduledMessages[scheduleIndex];
+    await ensureGroupData();
+    const group = customerGroups[existingSchedule.groupName];
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found for this schedule' });
+    }
+
+    const validation = validateSchedulePayload(group, req.body, existingSchedule, { requireFutureStart: false });
+    if (validation.error) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+
+    const value = validation.value;
+
+    existingSchedule.message = value.message;
+    existingSchedule.mediaUrl = value.mediaUrl;
+    existingSchedule.mediaType = value.mediaType;
+    existingSchedule.mediaFilename = value.mediaFilename;
+    existingSchedule.hasMedia = value.hasMedia;
+    existingSchedule.targetScope = value.targetScope;
+    existingSchedule.selectedPhones = value.targetScope === 'selected' ? value.selectedPhones : [];
+    existingSchedule.recurrenceType = value.recurrenceType;
+    existingSchedule.weekdays = value.weekdays;
+    existingSchedule.monthlyDay = value.monthlyDay;
+    existingSchedule.startDate = value.startDate;
+    existingSchedule.startTime = value.startTime;
+    existingSchedule.endDate = value.endDate;
+    existingSchedule.endTime = value.endTime;
+    existingSchedule.timezone = value.timezone;
+    existingSchedule.status = 'active';
+    existingSchedule.lastError = null;
+    existingSchedule.updatedAt = new Date().toISOString();
+
+    const nextRun = computeNextRunForSchedule(existingSchedule);
+    if (!nextRun) {
+      return res.status(400).json({
+        success: false,
+        error: 'Schedule configuration does not produce a run within the selected window'
+      });
+    }
+
+    existingSchedule.nextRun = nextRun.toISOString();
+
+    scheduledMessages[scheduleIndex] = existingSchedule;
+    saveScheduledMessages();
+    processScheduledMessages().catch(err => console.error('[SCHEDULE] Immediate scheduler run error:', err));
+
+    res.json({
+      success: true,
+      schedule: existingSchedule,
+      nextRun: existingSchedule.nextRun
+    });
+  } catch (error) {
+    console.error('[SCHEDULE] Error updating schedule:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update schedule',
+      details: error.message
+    });
+  }
+});
+
+// Delete a scheduled message
+app.delete('/schedules/:scheduleId', (req, res) => {
+  try {
+    const scheduleId = req.params.scheduleId;
+    const scheduleIndex = scheduledMessages.findIndex(schedule => schedule.id === scheduleId);
+
+    if (scheduleIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    scheduledMessages.splice(scheduleIndex, 1);
+    saveScheduledMessages();
+
+    res.json({ success: true });
+    processScheduledMessages().catch(err => console.error('[SCHEDULE] Immediate scheduler run error:', err));
+  } catch (error) {
+    console.error('[SCHEDULE] Error deleting schedule:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete schedule',
       details: error.message
     });
   }
@@ -2475,6 +2577,562 @@ async function loadCustomerGroups() {
   }
 }
 
+async function ensureGroupData() {
+  if (customerGroups && Object.keys(customerGroups).length > 0) {
+    return;
+  }
+
+  console.log('[SCHEDULE] Customer group cache empty. Reloading from Google Sheets...');
+  customerGroups = await loadCustomerGroups();
+}
+
+function validateSchedulePayload(group, payload = {}, existingSchedule = null, options = {}) {
+  const requireFutureStart = options.requireFutureStart ?? false;
+
+  if (!group || !Array.isArray(group.customers)) {
+    return { error: 'Group data unavailable' };
+  }
+
+  const timezone = existingSchedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+  const message = typeof payload.message === 'string'
+    ? payload.message
+    : (payload.message != null ? String(payload.message) : (existingSchedule?.message || ''));
+
+  const mediaUrl = typeof payload.mediaUrl === 'string'
+    ? payload.mediaUrl
+    : (existingSchedule?.mediaUrl || '');
+
+  if (!message && !mediaUrl) {
+    return { error: 'Message or media is required' };
+  }
+
+  const mediaType = payload.mediaType || existingSchedule?.mediaType || null;
+  const mediaFilename = payload.mediaFilename || existingSchedule?.mediaFilename || null;
+  const hasMedia = typeof payload.hasMedia === 'boolean' ? payload.hasMedia : !!mediaUrl;
+
+  const targetScope = payload.targetScope === 'all'
+    ? 'all'
+    : 'selected';
+
+  let selectedPhones = [];
+  if (targetScope === 'selected') {
+    const providedPhones = Array.isArray(payload.selectedPhones) && payload.selectedPhones.length > 0
+      ? payload.selectedPhones
+      : (existingSchedule?.selectedPhones || []);
+
+    if (!providedPhones.length) {
+      return { error: 'Select at least one recipient to schedule' };
+    }
+
+    const validPhones = new Set(group.customers.map(customer => customer.phone));
+    selectedPhones = providedPhones.map(phone => phone.toString());
+    const invalidPhones = selectedPhones.filter(phone => !validPhones.has(phone));
+
+    if (invalidPhones.length > 0) {
+      return { error: `Invalid recipients: ${invalidPhones.join(', ')}` };
+    }
+  }
+
+  const scheduleData = payload.schedule || {};
+  const startDate = scheduleData.startDate || existingSchedule?.startDate;
+  const startTime = scheduleData.startTime || existingSchedule?.startTime;
+  const endDate = scheduleData.endDate || existingSchedule?.endDate;
+  const endTime = scheduleData.endTime || existingSchedule?.endTime;
+
+  if (!startDate || !startTime || !endDate || !endTime) {
+    return { error: 'Start and end date/time are required' };
+  }
+
+  const startDateTime = combineScheduleDateTime(startDate, startTime);
+  const endDateTime = combineScheduleDateTime(endDate, endTime);
+
+  if (!startDateTime || Number.isNaN(startDateTime.getTime())) {
+    return { error: 'Invalid start date/time' };
+  }
+  if (!endDateTime || Number.isNaN(endDateTime.getTime())) {
+    return { error: 'Invalid end date/time' };
+  }
+
+  if (requireFutureStart && startDateTime <= new Date()) {
+    return { error: 'Start time must be in the future' };
+  }
+
+  if (endDateTime <= startDateTime) {
+    return { error: 'End time must be after the start time' };
+  }
+
+  const recurrenceType = (scheduleData.recurrenceType || existingSchedule?.recurrenceType || 'daily').toLowerCase();
+  const allowedRecurrence = ['daily', 'weekly', 'monthly'];
+  if (!allowedRecurrence.includes(recurrenceType)) {
+    return { error: 'Invalid recurrence type' };
+  }
+
+  let weekdays = [];
+  let monthlyDay = null;
+
+  if (recurrenceType === 'weekly') {
+    const providedWeekdays = Array.isArray(scheduleData.weekdays)
+      ? scheduleData.weekdays
+      : (existingSchedule?.weekdays || []);
+    weekdays = providedWeekdays
+      .map(value => Number(value))
+      .filter(value => !Number.isNaN(value) && value >= 0 && value <= 6);
+
+    if (!weekdays.length) {
+      return { error: 'Select at least one weekday for weekly schedules' };
+    }
+  }
+
+  if (recurrenceType === 'monthly') {
+    const providedDay = scheduleData.monthlyDay ?? existingSchedule?.monthlyDay ?? startDateTime.getDate();
+    monthlyDay = parseInt(providedDay, 10);
+    if (Number.isNaN(monthlyDay) || monthlyDay < 1 || monthlyDay > 31) {
+      return { error: 'Invalid monthly day (must be between 1 and 31)' };
+    }
+  }
+
+  return {
+    value: {
+      message,
+      mediaUrl,
+      mediaType,
+      mediaFilename,
+      hasMedia,
+      targetScope,
+      selectedPhones,
+      startDate,
+      startTime,
+      endDate,
+      endTime,
+      recurrenceType,
+      weekdays,
+      monthlyDay,
+      timezone,
+      startDateTime,
+      endDateTime
+    }
+  };
+}
+
+async function sendGroupMessageInternal(groupName, options = {}) {
+  try {
+    const {
+      message,
+      mediaUrl,
+      mediaType,
+      mediaFilename,
+      hasMedia,
+      selectedPhones
+    } = options;
+
+    if (!message && !mediaUrl) {
+      return {
+        status: 'validation_error',
+        error: 'Message content is required'
+      };
+    }
+
+    await ensureGroupData();
+
+    const group = customerGroups[groupName];
+    if (!group) {
+      return {
+        status: 'not_found',
+        error: 'Group not found'
+      };
+    }
+
+    if (!isClientReady) {
+      return {
+        status: 'client_not_ready',
+        error: 'WhatsApp client not ready'
+      };
+    }
+
+    console.log('Forward request received:', {
+      groupName,
+      hasMessage: !!message,
+      hasMedia: hasMedia,
+      mediaType,
+      mediaFilename,
+      mediaUrlLength: mediaUrl ? mediaUrl.length : 0,
+      selectedPhonesCount: selectedPhones ? selectedPhones.length : 'all'
+    });
+
+    const results = [];
+    let successCount = 0;
+    let errorCount = 0;
+
+    let customersToMessage = group.customers;
+    if (selectedPhones && Array.isArray(selectedPhones) && selectedPhones.length > 0) {
+      customersToMessage = group.customers.filter(customer =>
+        selectedPhones.includes(customer.phone)
+      );
+      console.log(`Filtering to ${customersToMessage.length} selected customers out of ${group.customers.length} total`);
+    }
+
+    for (const customer of customersToMessage) {
+      try {
+        let chatId;
+        if (customer.phone.includes('@g.us') || customer.phone.includes('@c.us')) {
+          chatId = customer.phone;
+        } else {
+          chatId = `${customer.phone}@c.us`;
+        }
+
+        console.log(`Getting chat for ID: ${chatId}, isGroup: ${customer.phone.includes('@g.us')}`);
+        const chat = await client.getChatById(chatId);
+
+        if (hasMedia && mediaUrl && mediaType) {
+          console.log(`Sending media to ${customer.phone}:`, {
+            mediaType,
+            mediaFilename,
+            isBase64: mediaUrl.startsWith('data:'),
+            mediaSize: mediaUrl.length
+          });
+
+          if (mediaUrl.startsWith('data:')) {
+            const base64Data = mediaUrl.split(',')[1];
+            const buffer = Buffer.from(base64Data, 'base64');
+
+            const tempDir = path.join(__dirname, 'temp');
+
+            if (!fs.existsSync(tempDir)) {
+              fs.mkdirSync(tempDir, { recursive: true });
+            }
+
+            const tempFilePath = path.join(tempDir, `${Date.now()}_${mediaFilename || 'media'}`);
+            fs.writeFileSync(tempFilePath, buffer);
+
+            try {
+              const mediaMessage = new MessageMedia(mediaType, base64Data);
+              await chat.sendMessage(mediaMessage, { caption: message });
+            } catch (error) {
+              console.error('Error sending media message:', error);
+              await chat.sendMessage(message || '');
+            } finally {
+              if (fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
+              }
+            }
+          } else {
+            await chat.sendMessage(mediaUrl, { caption: message });
+          }
+        } else if (message) {
+          await chat.sendMessage(message);
+        } else if (mediaUrl) {
+          await chat.sendMessage(mediaUrl);
+        }
+
+        successCount++;
+        results.push({
+          phone: customer.phone,
+          name: customer.name,
+          status: 'sent'
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        errorCount++;
+        results.push({
+          phone: customer.phone,
+          name: customer.name,
+          status: 'failed',
+          error: error.message
+        });
+        console.error(`Failed to send message to ${customer.name} (${customer.phone}):`, error);
+      }
+    }
+
+    return {
+      status: 'sent',
+      successCount,
+      errorCount,
+      totalCustomers: group.customers.length,
+      targetedCustomers: customersToMessage.length,
+      results
+    };
+  } catch (error) {
+    console.error('Error sending group message (internal):', error);
+    return {
+      status: 'error',
+      error
+    };
+  }
+}
+
+function combineScheduleDateTime(dateStr, timeStr) {
+  if (!dateStr) {
+    return null;
+  }
+
+  let timeComponent = timeStr || '00:00';
+  if (timeComponent.length === 5) {
+    timeComponent += ':00';
+  }
+
+  const date = new Date(`${dateStr}T${timeComponent}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getDaysInMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function computeNextRunForSchedule(schedule, referenceDate = null) {
+  const startDateTime = combineScheduleDateTime(schedule.startDate, schedule.startTime);
+  const endDateTime = combineScheduleDateTime(schedule.endDate, schedule.endTime);
+
+  if (!startDateTime) {
+    return null;
+  }
+
+  const now = referenceDate ? new Date(referenceDate) : new Date();
+  const startHour = startDateTime.getHours();
+  const startMinute = startDateTime.getMinutes();
+  const recurrenceType = (schedule.recurrenceType || 'daily').toLowerCase();
+  let candidate = null;
+
+  if (recurrenceType === 'daily') {
+    candidate = new Date(startDateTime);
+    if (candidate < now) {
+      const dayMs = 24 * 60 * 60 * 1000;
+      const diffMs = now.getTime() - candidate.getTime();
+      const daysAhead = Math.ceil(diffMs / dayMs);
+      candidate = new Date(candidate.getTime() + daysAhead * dayMs);
+    }
+  } else if (recurrenceType === 'weekly') {
+    const weekdays = Array.isArray(schedule.weekdays) && schedule.weekdays.length > 0
+      ? schedule.weekdays.map(Number).filter(num => !Number.isNaN(num) && num >= 0 && num <= 6)
+      : [startDateTime.getDay()];
+
+    candidate = new Date(Math.max(startDateTime.getTime(), now.getTime()));
+    candidate.setHours(startHour, startMinute, 0, 0);
+    if (candidate < now) {
+      candidate.setDate(candidate.getDate() + 1);
+      candidate.setHours(startHour, startMinute, 0, 0);
+    }
+
+    let attempts = 0;
+    while (attempts < 14) {
+      if (candidate >= startDateTime && weekdays.includes(candidate.getDay())) {
+        break;
+      }
+      candidate.setDate(candidate.getDate() + 1);
+      candidate.setHours(startHour, startMinute, 0, 0);
+      attempts++;
+    }
+
+    if (!weekdays.includes(candidate.getDay())) {
+      return null;
+    }
+  } else if (recurrenceType === 'monthly') {
+    const desiredDay = schedule.monthlyDay ? parseInt(schedule.monthlyDay, 10) : startDateTime.getDate();
+    const validDay = Number.isNaN(desiredDay) ? startDateTime.getDate() : Math.min(Math.max(desiredDay, 1), 31);
+
+    const adjustToMonthlyDay = (date) => {
+      const daysInMonth = getDaysInMonth(date.getFullYear(), date.getMonth());
+      const day = Math.min(validDay, daysInMonth);
+      const adjusted = new Date(date);
+      adjusted.setDate(day);
+      adjusted.setHours(startHour, startMinute, 0, 0);
+      return adjusted;
+    };
+
+    candidate = adjustToMonthlyDay(startDateTime);
+    if (candidate < startDateTime) {
+      candidate = adjustToMonthlyDay(new Date(startDateTime.getFullYear(), startDateTime.getMonth() + 1, 1));
+    }
+
+    let attempts = 0;
+    while (candidate < now && attempts < 240) {
+      candidate = adjustToMonthlyDay(new Date(candidate.getFullYear(), candidate.getMonth() + 1, 1));
+      attempts++;
+    }
+
+    if (attempts >= 240) {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  if (!candidate) {
+    return null;
+  }
+
+  if (candidate < startDateTime) {
+    candidate = new Date(startDateTime);
+  }
+
+  if (endDateTime && candidate > endDateTime) {
+    return null;
+  }
+
+  return candidate;
+}
+
+function loadScheduledMessages() {
+  try {
+    if (!fs.existsSync(SCHEDULE_FILE_PATH)) {
+      scheduledMessages = [];
+      return;
+    }
+
+    const raw = fs.readFileSync(SCHEDULE_FILE_PATH, 'utf-8');
+    const data = JSON.parse(raw);
+    scheduledMessages = Array.isArray(data) ? data : [];
+
+    let updated = false;
+    const now = new Date();
+
+    scheduledMessages.forEach(schedule => {
+      if (schedule.status !== 'active') {
+        return;
+      }
+
+      const nextRun = schedule.nextRun ? new Date(schedule.nextRun) : null;
+      if (!nextRun || Number.isNaN(nextRun.getTime()) || nextRun < now) {
+        const computed = computeNextRunForSchedule(schedule, now);
+        if (computed) {
+          schedule.nextRun = computed.toISOString();
+        } else {
+          schedule.status = 'completed';
+          schedule.nextRun = null;
+        }
+        updated = true;
+      }
+    });
+
+    if (updated) {
+      saveScheduledMessages();
+    }
+  } catch (error) {
+    console.error('[SCHEDULE] Error loading scheduled messages:', error);
+    scheduledMessages = [];
+  }
+}
+
+function saveScheduledMessages() {
+  try {
+    fs.writeFileSync(SCHEDULE_FILE_PATH, JSON.stringify(scheduledMessages, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('[SCHEDULE] Error saving scheduled messages:', error);
+  }
+}
+
+async function processScheduledMessages() {
+  if (isProcessingSchedules) {
+    return;
+  }
+  isProcessingSchedules = true;
+
+  try {
+    if (!scheduledMessages.length) {
+      return;
+    }
+
+    const now = new Date();
+    let updated = false;
+
+    for (const schedule of scheduledMessages) {
+      if (schedule.status !== 'active') {
+        continue;
+      }
+
+      if (!schedule.nextRun) {
+        const next = computeNextRunForSchedule(schedule, now);
+        if (next) {
+          schedule.nextRun = next.toISOString();
+        } else {
+          schedule.status = 'completed';
+        }
+        updated = true;
+        continue;
+      }
+
+      const nextRunDate = new Date(schedule.nextRun);
+      if (Number.isNaN(nextRunDate.getTime())) {
+        schedule.status = 'completed';
+        schedule.nextRun = null;
+        updated = true;
+        continue;
+      }
+
+      if (nextRunDate > now) {
+        continue;
+      }
+
+      console.log(`[SCHEDULE] Executing schedule ${schedule.id} for group ${schedule.groupName} at ${now.toISOString()}`);
+
+      const result = await sendGroupMessageInternal(schedule.groupName, {
+        message: schedule.message,
+        mediaUrl: schedule.mediaUrl,
+        mediaType: schedule.mediaType,
+        mediaFilename: schedule.mediaFilename,
+        hasMedia: schedule.hasMedia,
+        selectedPhones: schedule.targetScope === 'selected' ? schedule.selectedPhones : undefined
+      });
+
+      if (result.status === 'sent') {
+        schedule.lastRunAt = now.toISOString();
+        schedule.lastError = null;
+        const next = computeNextRunForSchedule(schedule, new Date(now.getTime() + 60000));
+        if (next) {
+          schedule.nextRun = next.toISOString();
+        } else {
+          schedule.nextRun = null;
+          schedule.status = 'completed';
+          console.log(`[SCHEDULE] Schedule ${schedule.id} completed (no further runs)`);
+        }
+      } else if (result.status === 'client_not_ready') {
+        schedule.lastError = 'WhatsApp client not ready';
+        const retry = new Date(now.getTime() + 60 * 1000);
+        schedule.nextRun = retry.toISOString();
+        console.warn(`[SCHEDULE] WhatsApp client not ready. Schedule ${schedule.id} will retry at ${schedule.nextRun}`);
+      } else {
+        const errorMessage = result.error ? (result.error.message || result.error.toString()) : 'Unknown error';
+        schedule.lastError = errorMessage;
+        const retry = new Date(now.getTime() + 5 * 60 * 1000);
+        const endDateTime = combineScheduleDateTime(schedule.endDate, schedule.endTime);
+        if (endDateTime && retry > endDateTime) {
+          schedule.status = 'completed';
+          schedule.nextRun = null;
+          console.error(`[SCHEDULE] Schedule ${schedule.id} failed and end window passed. Marking completed. Error: ${errorMessage}`);
+        } else {
+          schedule.nextRun = retry.toISOString();
+          console.error(`[SCHEDULE] Schedule ${schedule.id} failed. Retrying at ${schedule.nextRun}. Error: ${errorMessage}`);
+        }
+      }
+
+      updated = true;
+    }
+
+    if (updated) {
+      saveScheduledMessages();
+    }
+  } catch (error) {
+    console.error('[SCHEDULE] Error processing scheduled messages:', error);
+  } finally {
+    isProcessingSchedules = false;
+  }
+}
+
+function startScheduleChecker() {
+  loadScheduledMessages();
+
+  if (scheduleChecker) {
+    clearInterval(scheduleChecker);
+  }
+
+  scheduleChecker = setInterval(() => {
+    processScheduledMessages().catch(err => console.error('[SCHEDULE] Scheduler loop error:', err));
+  }, SCHEDULE_CHECK_INTERVAL);
+
+  processScheduledMessages().catch(err => console.error('[SCHEDULE] Initial scheduler run error:', err));
+}
+
 async function updateAttendance(groupName, customerPhone, status = 'present', month = null, message = '', messageTimestamp = null) {
   try {
     const sheets = await initializeGoogleSheets();
@@ -2786,6 +3444,9 @@ app.post('/api/update-attendance', async (req, res) => {
   }
 });
 
+// Initialize scheduler
+startScheduleChecker();
+
 // Initialize WhatsApp client
 client.initialize();
 
@@ -2793,4 +3454,109 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Open http://localhost:${PORT} in your browser`);
+});
+
+// List scheduled messages
+app.get('/schedules', async (req, res) => {
+  try {
+    await ensureGroupData();
+    const { groupName } = req.query;
+    let schedules = scheduledMessages;
+
+    if (groupName) {
+      schedules = schedules.filter(schedule => schedule.groupName === groupName);
+    }
+
+    res.json({ success: true, schedules });
+  } catch (error) {
+    console.error('[SCHEDULE] Error listing schedules:', error);
+    res.status(500).json({ success: false, error: 'Failed to load schedules', details: error.message });
+  }
+});
+
+// Update an existing schedule
+app.put('/schedules/:scheduleId', async (req, res) => {
+  try {
+    const scheduleId = req.params.scheduleId;
+    const scheduleIndex = scheduledMessages.findIndex(schedule => schedule.id === scheduleId);
+
+    if (scheduleIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    const existingSchedule = scheduledMessages[scheduleIndex];
+    await ensureGroupData();
+    const group = customerGroups[existingSchedule.groupName];
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found' });
+    }
+
+    const validation = validateSchedulePayload(group, req.body, existingSchedule, { requireFutureStart: false });
+    if (validation.error) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+
+    const value = validation.value;
+
+    existingSchedule.message = value.message;
+    existingSchedule.mediaUrl = value.mediaUrl;
+    existingSchedule.mediaType = value.mediaType;
+    existingSchedule.mediaFilename = value.mediaFilename;
+    existingSchedule.hasMedia = value.hasMedia;
+    existingSchedule.targetScope = value.targetScope;
+    existingSchedule.selectedPhones = value.targetScope === 'selected' ? value.selectedPhones : [];
+    existingSchedule.recurrenceType = value.recurrenceType;
+    existingSchedule.weekdays = value.weekdays;
+    existingSchedule.monthlyDay = value.monthlyDay;
+    existingSchedule.startDate = value.startDate;
+    existingSchedule.startTime = value.startTime;
+    existingSchedule.endDate = value.endDate;
+    existingSchedule.endTime = value.endTime;
+    existingSchedule.timezone = value.timezone || existingSchedule.timezone;
+    existingSchedule.updatedAt = new Date().toISOString();
+    existingSchedule.status = 'active';
+    existingSchedule.lastError = null;
+
+    const nextRun = computeNextRunForSchedule(existingSchedule);
+    if (nextRun) {
+      existingSchedule.nextRun = nextRun.toISOString();
+    } else {
+      existingSchedule.nextRun = null;
+      existingSchedule.status = 'completed';
+    }
+
+    saveScheduledMessages();
+
+    processScheduledMessages().catch(err => console.error('[SCHEDULE] Scheduler run error after update:', err));
+
+    res.json({
+      success: true,
+      scheduleId: existingSchedule.id,
+      nextRun: existingSchedule.nextRun,
+      status: existingSchedule.status
+    });
+  } catch (error) {
+    console.error('[SCHEDULE] Error updating schedule:', error);
+    res.status(500).json({ success: false, error: 'Failed to update schedule', details: error.message });
+  }
+});
+
+// Delete a schedule
+app.delete('/schedules/:scheduleId', (req, res) => {
+  try {
+    const scheduleId = req.params.scheduleId;
+    const scheduleIndex = scheduledMessages.findIndex(schedule => schedule.id === scheduleId);
+
+    if (scheduleIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    const [removedSchedule] = scheduledMessages.splice(scheduleIndex, 1);
+    saveScheduledMessages();
+
+    res.json({ success: true, scheduleId: removedSchedule.id });
+  } catch (error) {
+    console.error('[SCHEDULE] Error deleting schedule:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete schedule', details: error.message });
+  }
 });
