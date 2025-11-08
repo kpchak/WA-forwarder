@@ -2261,6 +2261,9 @@ function setScheduleVisibility(shouldShow = false, options = {}) {
     if (scheduleOptionsVisible && !scheduleOptions.dataset.initialized) {
         initializeScheduleDefaults();
         scheduleOptions.dataset.initialized = 'true';
+        updateScheduleRecurrenceUI();
+    } else if (scheduleOptionsVisible) {
+        updateScheduleRecurrenceUI();
     }
 
     if (!scheduleOptionsVisible && !isInitializing) {

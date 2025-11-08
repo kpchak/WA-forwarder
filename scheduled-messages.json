@@ -87,9 +87,9 @@
     "timezone": "Asia/Calcutta",
     "createdAt": "2025-11-08T17:35:07.559Z",
     "updatedAt": null,
-    "lastRunAt": null,
-    "nextRun": "2025-11-08T17:39:00.000Z",
-    "status": "active",
+    "lastRunAt": "2025-11-08T17:39:02.781Z",
+    "nextRun": null,
+    "status": "completed",
     "lastError": null
   }
 ]
