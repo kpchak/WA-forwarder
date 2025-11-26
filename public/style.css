@@ -1,3 +1,42 @@
+/* View Toggle Styles */
+.view-toggle-container {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.btn-outline-primary {
+    background: white;
+    color: #007bff;
+    border: 2px solid #007bff;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-outline-primary:hover {
+    background: #007bff;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+}
+
+.details-view-container {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 2px solid #dee2e6;
+}
+
 /* Text Filter Styles */
 .text-filter-group {
     margin-top: 20px;
@@ -96,6 +135,9 @@ header p {
     border-radius: 15px;
     padding: 30px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    min-height: 400px;
+    height: auto;
+    overflow: visible;
 }
 
 .status-card {
@@ -249,8 +291,10 @@ header p {
 
 .header-actions {
     display: flex;
+    flex-direction: row;
     align-items: center;
     gap: 15px;
+    flex-wrap: wrap;
 }
 
 .date-filter {
@@ -636,9 +680,10 @@ header p {
     }
     
     .header-actions {
-        flex-direction: column;
-        align-items: flex-start;
+        flex-direction: row;
+        align-items: center;
         gap: 10px;
+        flex-wrap: wrap;
     }
     
     .media-image,
@@ -981,6 +1026,118 @@ header p {
     transition: background 0.2s;
 }
 
+/* Code Selection Modal Styles */
+.code-selection-modal .modal-content {
+    max-width: 500px;
+}
+
+.code-option-group {
+    margin-bottom: 20px;
+}
+
+.code-option-group label {
+    display: block;
+    margin-bottom: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.code-option-group label:hover {
+    background: #f8f9fa;
+}
+
+.code-option-group input[type="radio"] {
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+.code-select,
+.code-input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: border-color 0.2s;
+}
+
+.code-select:focus,
+.code-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.code-select {
+    cursor: pointer;
+}
+
+.code-selection-error {
+    color: #dc3545;
+    margin-top: 10px;
+    padding: 10px;
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.code-selection-loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+}
+
+.code-selection-loading i {
+    font-size: 24px;
+    margin-right: 10px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #dee2e6;
+}
+
+.modal-footer .btn {
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.modal-footer .btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.modal-footer .btn-secondary:hover {
+    background: #5a6268;
+}
+
+.modal-footer .btn-primary {
+    background: #007bff;
+    color: white;
+}
+
+.modal-footer .btn-primary:hover:not(:disabled) {
+    background: #0056b3;
+}
+
+.modal-footer .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .saved-list-item:hover {
     background: #f0f0f0;
 }
@@ -1135,6 +1292,8 @@ header p {
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     padding: 20px;
     margin-bottom: 20px;
+    min-height: 200px;
+    width: 100%;
 }
 
 .groups-header {
@@ -1152,9 +1311,13 @@ header p {
 }
 
 .groups-container {
-    display: grid;
+    display: grid !important;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 20px;
+    visibility: visible !important;
+    opacity: 1 !important;
+    min-height: 200px;
+    width: 100%;
 }
 
 .group-card {

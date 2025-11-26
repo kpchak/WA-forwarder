@@ -58,202 +58,6 @@
                 </p>
             </div>
 
-            <!-- Phone Number Input -->
-            <div class="phone-section" id="phoneSection" style="display: none;">
-                
-                <!-- Time Range Filter -->
-                <div class="time-filter-section">
-                    <h3><i class="fas fa-clock"></i> Time Range Filter</h3>
-                    
-                    <!-- Time Range Summary -->
-                    <div class="time-range-summary" id="timeRangeSummary" style="display: none;">
-                        <p class="summary-text" id="summaryText">No time filter applied</p>
-                        <p class="summary-details" id="summaryDetails">All messages will be shown</p>
-                    </div>
-                    
-                    <!-- Quick Presets -->
-                    <div class="time-presets">
-                        <h4><i class="fas fa-bolt"></i> Quick Presets</h4>
-                        <div class="preset-buttons">
-                            <button class="preset-btn" data-preset="today">Today</button>
-                            <button class="preset-btn" data-preset="yesterday">Yesterday</button>
-                            <button class="preset-btn" data-preset="last7days">Last 7 Days</button>
-                            <button class="preset-btn" data-preset="lastmonth">Last Month</button>
-                            <button class="preset-btn" data-preset="thisweek">This Week</button>
-                            <button class="preset-btn" data-preset="lastweek">Last Week</button>
-                            <button class="preset-btn" data-preset="thismonth">This Month</button>
-                            <button class="preset-btn" data-preset="custom">Custom Range</button>
-                        </div>
-                    </div>
-                    
-                    <div class="time-filter-controls">
-                        <div class="date-time-group">
-                            <label><i class="fas fa-calendar-plus"></i> From Date & Time</label>
-                            <input type="date" id="fromDate" class="date-input" title="Select start date">
-                            <div class="time-slider-container">
-                                <label>Time: <span id="fromTimeDisplay" class="time-display">00:00</span></label>
-                                <input type="range" id="fromTimeSlider" min="0" max="1439" value="0" class="time-slider" title="Select start time">
-                            </div>
-                        </div>
-                        
-                        <div class="date-time-group">
-                            <label><i class="fas fa-calendar-minus"></i> To Date & Time</label>
-                            <input type="date" id="toDate" class="date-input" title="Select end date">
-                            <div class="time-slider-container">
-                                <label>Time: <span id="toTimeDisplay" class="time-display">23:59</span></label>
-                                <input type="range" id="toTimeSlider" min="0" max="1439" value="1439" class="time-slider" title="Select end time">
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="filter-actions">
-                        <button id="applyTimeFilter" class="btn btn-primary">
-                            <i class="fas fa-filter"></i> Apply Time Filter
-                        </button>
-                        <button id="clearTimeFilter" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear Filter
-                        </button>
-                        <button id="resetTimeFilter" class="btn btn-info">
-                            <i class="fas fa-undo"></i> Reset to Default
-                        </button>
-                    </div>
-                </div>
-                    
-            <!-- Text Filter -->
-            <div class="text-filter-group">
-                <label>Text Filter:</label>
-                <div class="text-filter-input">
-                    <input type="text" id="textFilter" placeholder="Enter text to filter messages (e.g., 👍P, 👍C, keywords)" class="text-input">
-                    <div class="text-filter-actions">
-                        <button id="applyTextFilter" class="btn btn-info">
-                            <i class="fas fa-search"></i> Filter Text
-                        </button>
-                        <button id="clearTextFilter" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear Text
-                        </button>
-                    </div>
-                </div>
-                <div class="text-filter-info">
-                    <small>Filter messages containing any text pattern. Useful for emojis, status codes, or phrases.</small>
-                </div>
-            </div>
-
-            <!-- Hours Filter -->
-            <div class="hours-filter-group">
-                <label>Hours Filter:</label>
-                <div class="hours-filter-input">
-                    <input type="number" id="hoursFilter" placeholder="Enter hours (e.g., 2, 6, 12, 24)" class="hours-input" min="1" max="168">
-                    <div class="hours-filter-actions">
-                        <button id="applyHoursFilter" class="btn btn-warning">
-                            <i class="fas fa-clock"></i> Filter Last Hours
-                        </button>
-                        <button id="clearHoursFilter" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear Hours
-                        </button>
-                    </div>
-                </div>
-                <div class="hours-filter-info">
-                    <small>Show messages from the last X hours (1-168 hours = 1 week)</small>
-                </div>
-            </div>
-
-            <!-- Select Contacts & Groups (Moved from Phone Section) -->
-            <div class="select-contacts-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
-                <h3 style="margin-top: 0; margin-bottom: 15px;"><i class="fas fa-users"></i> Select Contacts & Groups</h3>
-                
-                <!-- Chat Selector -->
-                <div class="chat-selector">
-                    <button id="loadChatsBtn" class="btn btn-info">
-                        <i class="fas fa-list"></i> Load All Chats
-                    </button>
-                    <div class="chat-filters">
-                        <button id="showAllBtn" class="filter-btn active">All</button>
-                        <button id="showContactsBtn" class="filter-btn">Contacts</button>
-                        <button id="showGroupsBtn" class="filter-btn">Groups</button>
-                    </div>
-                    <div class="chat-list" id="chatList" style="display: none;">
-                        <!-- Available chats will appear here -->
-                    </div>
-                </div>
-                
-                <!-- Manual Input -->
-                <div class="manual-input">
-                    <h4 style="margin-top: 20px;">Or Enter Manually</h4>
-                    <div class="input-group">
-                        <input type="text" id="phoneInput" placeholder="Enter phone number or group ID (e.g., +1234567890, 1234567890@c.us, or 120363123456789012@g.us)" />
-                        <button id="addPhoneBtn" class="btn btn-secondary">
-                            <i class="fas fa-plus"></i> Add
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="phone-list" id="phoneList">
-                    <!-- Added phone numbers will appear here -->
-                </div>
-                <div class="input-actions">
-                    <button id="saveListBtn" class="btn btn-success" disabled>
-                        <i class="fas fa-save"></i> Save List
-                    </button>
-                    <button id="loadListBtn" class="btn btn-info">
-                        <i class="fas fa-folder-open"></i> Load Saved
-                    </button>
-                    <button id="customerListBtn" class="btn btn-secondary">
-                        <i class="fas fa-users"></i> Customer List
-                    </button>
-                    <button id="clearPhonesBtn" class="btn btn-danger">
-                        <i class="fas fa-trash"></i> Clear All
-                    </button>
-                    <button id="setPhoneBtn" class="btn btn-primary" disabled>
-                        <i class="fas fa-search"></i> View Merged Messages
-                    </button>
-                </div>
-                <p class="phone-instructions" style="margin-top: 10px; font-size: 14px; color: #6c757d;">
-                    Select from your chats or manually enter phone numbers/group IDs to view merged messages.
-                </p>
-            </div>
-
-            <!-- Customer Selector -->
-            <div class="customer-selector-group">
-                <label>Filter by Customer:</label>
-                <div class="customer-selector-input">
-                    <select id="customerSelector" class="customer-dropdown">
-                        <option value="">-- All Customers --</option>
-                        <!-- Options will be populated dynamically -->
-                    </select>
-                    <div class="customer-selector-actions">
-                        <button id="applyCustomerSelector" class="btn btn-primary">
-                            <i class="fas fa-filter"></i> Filter
-                        </button>
-                        <button id="clearCustomerSelector" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear
-                        </button>
-                    </div>
-                </div>
-                <div class="customer-selector-info">
-                    <small>Select a specific customer to show only their messages</small>
-                </div>
-            </div>
-
-            <!-- Customer Messages Filter -->
-            <div class="customer-filter-group">
-                <label>Customer Messages Filter:</label>
-                <div class="customer-filter-input">
-                    <div class="customer-filter-actions">
-                        <button id="applyCustomerFilter" class="btn btn-success">
-                            <i class="fas fa-users"></i> Hide My Messages
-                        </button>
-                        <button id="clearCustomerFilter" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Show All Messages
-                        </button>
-                    </div>
-                </div>
-                <div class="customer-filter-info">
-                    <small>Hide your own messages (show only messages sent by customers)</small>
-                </div>
-            </div>
-                </div>
-            </div>
-
             <!-- Customer Groups Section -->
             <div class="groups-section" id="groupsSection" style="display: none;">
                 <div class="groups-header">
@@ -261,9 +65,6 @@
                     <div class="header-actions">
                         <button id="loadGroupsBtn" class="btn btn-primary">
                             <i class="fas fa-sync"></i> Load from Google Sheets
-                        </button>
-                        <button id="refreshGroupsBtn" class="btn btn-secondary">
-                            <i class="fas fa-refresh"></i> Refresh
                         </button>
                     </div>
                 </div>
@@ -273,7 +74,6 @@
                     </div>
                 </div>
             </div>
-
 
             <!-- Group Message Section -->
             <div class="group-message-section" id="groupMessageSection" style="display: none;">
@@ -388,7 +188,7 @@
                                         <input type="time" id="scheduleStartTime" class="schedule-input">
                                     </div>
                                 </div>
-                                <div class="schedule-row">
+                                <div class="schedule-row" id="scheduleEndSection">
                                     <div class="schedule-field">
                                         <label for="scheduleEndDate">End Date</label>
                                         <input type="date" id="scheduleEndDate" class="schedule-input">
@@ -398,6 +198,15 @@
                                         <input type="time" id="scheduleEndTime" class="schedule-input">
                                     </div>
                                 </div>
+                            </div>
+                            <div class="schedule-section">
+                                <label>Timezone</label>
+                                <select id="scheduleTimezone">
+                                    <option value="Asia/Calcutta" selected>Asia/Calcutta (IST)</option>
+                                    <option value="UTC">UTC</option>
+                                    <option value="America/New_York">America/New_York (EST)</option>
+                                    <option value="Europe/London">Europe/London (GMT)</option>
+                                </select>
                             </div>
                             <div class="schedule-actions">
                                 <div class="schedule-primary-actions">
@@ -435,11 +244,24 @@
                 </div>
             </div>
 
-            <!-- Messages Section -->
-            <div class="messages-section" id="messagesSection" style="display: none;">
-                <div class="messages-header">
-                    <h2>Merged Messages <span id="targetPhoneDisplay"></span></h2>
-                    <div class="header-actions">
+            <!-- Phone Number Input -->
+            <div class="phone-section" id="phoneSection" style="display: none;">
+                
+                <!-- View Toggle -->
+                <div class="view-toggle-container">
+                    <button id="toggleViewBtn" class="btn btn-outline-primary">
+                        <i class="fas fa-eye"></i> <span id="toggleViewText">Show Details View</span>
+                    </button>
+                </div>
+                
+                <!-- Merged Messages Header -->
+                <div class="messages-header" style="margin: 20px 0; padding-bottom: 15px; border-bottom: 2px solid #e9ecef;">
+                    <h2 style="margin: 0; color: #333; font-size: 1.5rem;">Merged Messages <span id="targetPhoneDisplay"></span></h2>
+                    <div class="header-actions" style="display: flex; flex-direction: row; align-items: center; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
+                        <!-- Customer Messages Toggle -->
+                        <button id="toggleCustomerMessagesBtn" class="btn btn-success" title="Toggle to show/hide your own messages">
+                            <i class="fas fa-users"></i> <span id="toggleCustomerMessagesText">Show All Messages</span>
+                        </button>
                         <button id="copyTextBtn" class="btn btn-info">
                             <i class="fas fa-copy"></i> Copy Text
                         </button>
@@ -448,7 +270,9 @@
                         </button>
                     </div>
                 </div>
-                <div class="messages-container" id="messagesContainer">
+                
+                <!-- Messages Container -->
+                <div class="messages-container" id="messagesContainer" style="margin-bottom: 20px;">
                     <div class="loading" id="loadingMessages">
                         <i class="fas fa-spinner fa-spin"></i> 
                         <span class="loading-text">Loading messages...</span>
@@ -463,6 +287,185 @@
                 <button id="scrollToBottom" class="scroll-to-bottom" style="display: none;">
                     <i class="fas fa-arrow-down"></i>
                 </button>
+                
+                <!-- Time Range Filter -->
+                <div class="time-filter-section">
+                    <h3><i class="fas fa-clock"></i> Time Range Filter</h3>
+                    
+                    <!-- Time Range Summary -->
+                    <div class="time-range-summary" id="timeRangeSummary" style="display: none;">
+                        <p class="summary-text" id="summaryText">No time filter applied</p>
+                        <p class="summary-details" id="summaryDetails">All messages will be shown</p>
+                    </div>
+                    
+                    <!-- Quick Presets -->
+                    <div class="time-presets">
+                        <h4><i class="fas fa-bolt"></i> Quick Presets</h4>
+                        <div class="preset-buttons">
+                            <button class="preset-btn" data-preset="today">Today</button>
+                            <button class="preset-btn" data-preset="yesterday">Yesterday</button>
+                            <button class="preset-btn" data-preset="last7days">Last 7 Days</button>
+                            <button class="preset-btn" data-preset="lastmonth">Last Month</button>
+                            <button class="preset-btn" data-preset="thisweek">This Week</button>
+                            <button class="preset-btn" data-preset="lastweek">Last Week</button>
+                            <button class="preset-btn" data-preset="thismonth">This Month</button>
+                            <button class="preset-btn" data-preset="custom">Custom Range</button>
+                        </div>
+                    </div>
+                    
+                    <div class="time-filter-controls">
+                        <div class="date-time-group">
+                            <label><i class="fas fa-calendar-plus"></i> From Date & Time</label>
+                            <input type="date" id="fromDate" class="date-input" title="Select start date">
+                            <div class="time-slider-container">
+                                <label>Time: <span id="fromTimeDisplay" class="time-display">00:00</span></label>
+                                <input type="range" id="fromTimeSlider" min="0" max="1439" value="0" class="time-slider" title="Select start time">
+                            </div>
+                        </div>
+                        
+                        <div class="date-time-group">
+                            <label><i class="fas fa-calendar-minus"></i> To Date & Time</label>
+                            <input type="date" id="toDate" class="date-input" title="Select end date">
+                            <div class="time-slider-container">
+                                <label>Time: <span id="toTimeDisplay" class="time-display">23:59</span></label>
+                                <input type="range" id="toTimeSlider" min="0" max="1439" value="1439" class="time-slider" title="Select end time">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="filter-actions">
+                        <button id="applyTimeFilter" class="btn btn-primary">
+                            <i class="fas fa-filter"></i> Apply Time Filter
+                        </button>
+                        <button id="clearTimeFilter" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear Filter
+                        </button>
+                        <button id="resetTimeFilter" class="btn btn-info">
+                            <i class="fas fa-undo"></i> Reset to Default
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Select Contacts & Groups (Always visible in Basic View) -->
+                <div class="select-contacts-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+                    <h3 style="margin-top: 0; margin-bottom: 15px;"><i class="fas fa-users"></i> Select Contacts & Groups</h3>
+                    
+                    <!-- Chat Selector -->
+                    <div class="chat-selector">
+                        <button id="loadChatsBtn" class="btn btn-info">
+                            <i class="fas fa-list"></i> Load All Chats
+                        </button>
+                        <div class="chat-filters">
+                            <button id="showAllBtn" class="filter-btn active">All</button>
+                            <button id="showContactsBtn" class="filter-btn">Contacts</button>
+                            <button id="showGroupsBtn" class="filter-btn">Groups</button>
+                        </div>
+                        <div class="chat-list" id="chatList" style="display: none;">
+                            <!-- Available chats will appear here -->
+                        </div>
+                    </div>
+                    
+                    <!-- Manual Input -->
+                    <div class="manual-input">
+                        <h4 style="margin-top: 20px;">Or Enter Manually</h4>
+                        <div class="input-group">
+                            <input type="text" id="phoneInput" placeholder="Enter phone number or group ID (e.g., +1234567890, 1234567890@c.us, or 120363123456789012@g.us)" />
+                            <button id="addPhoneBtn" class="btn btn-secondary">
+                                <i class="fas fa-plus"></i> Add
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="phone-list" id="phoneList">
+                        <!-- Added phone numbers will appear here -->
+                    </div>
+                    <div class="input-actions">
+                        <button id="saveListBtn" class="btn btn-success" disabled>
+                            <i class="fas fa-save"></i> Save List
+                        </button>
+                        <button id="loadListBtn" class="btn btn-info">
+                            <i class="fas fa-folder-open"></i> Load Saved
+                        </button>
+                        <button id="customerListBtn" class="btn btn-secondary">
+                            <i class="fas fa-users"></i> Customer List
+                        </button>
+                        <button id="clearPhonesBtn" class="btn btn-danger">
+                            <i class="fas fa-trash"></i> Clear All
+                        </button>
+                        <button id="setPhoneBtn" class="btn btn-primary" disabled>
+                            <i class="fas fa-search"></i> View Merged Messages
+                        </button>
+                    </div>
+                    <p class="phone-instructions" style="margin-top: 10px; font-size: 14px; color: #6c757d;">
+                        Select from your chats or manually enter phone numbers/group IDs to view merged messages.
+                    </p>
+                </div>
+                
+                <!-- Details View Container (Hidden by default) -->
+                <div class="details-view-container" id="detailsViewContainer" style="display: none;">
+                    
+            <!-- Text Filter -->
+            <div class="text-filter-group">
+                <label>Text Filter:</label>
+                <div class="text-filter-input">
+                    <input type="text" id="textFilter" placeholder="Enter text to filter messages (e.g., 👍P, 👍C, keywords)" class="text-input">
+                    <div class="text-filter-actions">
+                        <button id="applyTextFilter" class="btn btn-info">
+                            <i class="fas fa-search"></i> Filter Text
+                        </button>
+                        <button id="clearTextFilter" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear Text
+                        </button>
+                    </div>
+                </div>
+                <div class="text-filter-info">
+                    <small>Filter messages containing any text pattern. Useful for emojis, status codes, or phrases.</small>
+                </div>
+            </div>
+
+            <!-- Hours Filter -->
+            <div class="hours-filter-group">
+                <label>Hours Filter:</label>
+                <div class="hours-filter-input">
+                    <input type="number" id="hoursFilter" placeholder="Enter hours (e.g., 2, 6, 12, 24)" class="hours-input" min="1" max="168">
+                    <div class="hours-filter-actions">
+                        <button id="applyHoursFilter" class="btn btn-warning">
+                            <i class="fas fa-clock"></i> Filter Last Hours
+                        </button>
+                        <button id="clearHoursFilter" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear Hours
+                        </button>
+                    </div>
+                </div>
+                <div class="hours-filter-info">
+                    <small>Show messages from the last X hours (1-168 hours = 1 week)</small>
+                </div>
+
+            <!-- Customer Selector -->
+            <div class="customer-selector-group">
+                <label>Filter by Customer:</label>
+                <div class="customer-selector-input">
+                    <select id="customerSelector" class="customer-dropdown">
+                        <option value="">-- All Customers --</option>
+                        <!-- Options will be populated dynamically -->
+                    </select>
+                    <div class="customer-selector-actions">
+                        <button id="applyCustomerSelector" class="btn btn-primary">
+                            <i class="fas fa-filter"></i> Filter
+                        </button>
+                        <button id="clearCustomerSelector" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear
+                        </button>
+                    </div>
+                </div>
+                <div class="customer-selector-info">
+                    <small>Select a specific customer to show only their messages</small>
+                </div>
+            </div>
+
+                </div>
+                <!-- End Details View Container -->
+                
             </div>
 
             <!-- Error Messages -->
@@ -474,6 +477,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js"></script>
+    <script src="script.js?v=14"></script>
 </body>
 </html>

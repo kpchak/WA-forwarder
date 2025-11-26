@@ -1,4 +1,5 @@
-// Socket.IO connection
+// Version check - if you see this, new script is loaded!
+console.log('🚀 SCRIPT.JS VERSION 3.0 LOADED - Cache busting active!');
 console.log('🔌 Initializing Socket.IO connection...');
 const socket = io();
 
@@ -41,7 +42,6 @@ const navBtns = document.querySelectorAll('.nav-btn');
 const groupsSection = document.getElementById('groupsSection');
 const groupMessageSection = document.getElementById('groupMessageSection');
 const loadGroupsBtn = document.getElementById('loadGroupsBtn');
-const refreshGroupsBtn = document.getElementById('refreshGroupsBtn');
 const groupsContainer = document.getElementById('groupsContainer');
 const loadingGroups = document.getElementById('loadingGroups');
 const backToGroupsBtn = document.getElementById('backToGroupsBtn');
@@ -82,7 +82,7 @@ let textFilterInput, applyTextFilterBtn, clearTextFilterBtn;
 let hoursFilter, applyHoursFilter, clearHoursFilter;
 
 // Customer filter elements (will be initialized in DOMContentLoaded)
-let applyCustomerFilter, clearCustomerFilter;
+let toggleCustomerMessagesBtn, toggleCustomerMessagesText;
 
 // Time filter elements (will be initialized in DOMContentLoaded)
 let fromDate, toDate, fromTimeSlider, toTimeSlider, fromTimeDisplay, toTimeDisplay, applyTimeFilter, clearTimeFilter, resetTimeFilter;
@@ -111,7 +111,7 @@ let timeFilter = {
 };
 let hoursFilterEnabled = false;
 let hoursFilterValue = 0;
-let customerFilterEnabled = false;
+let customerFilterEnabled = true; // Default: show only customer messages
 let isEditingSchedule = false;
 let editingScheduleId = null;
 let editingScheduleData = null;
@@ -120,6 +120,7 @@ let currentScheduleEditId = null;
 let currentGroupSchedules = [];
 let scheduledListVisible = false;
 let scheduleOptionsVisible = false;
+let isDetailsView = false; // Track current view state (false = basic view, true = details view)
 
 // Message store for forwarding
 let messageStore = {};
@@ -409,8 +410,8 @@ document.addEventListener('DOMContentLoaded', function() {
     hoursFilter = document.getElementById('hoursFilter');
     applyHoursFilter = document.getElementById('applyHoursFilter');
     clearHoursFilter = document.getElementById('clearHoursFilter');
-    applyCustomerFilter = document.getElementById('applyCustomerFilter');
-    clearCustomerFilter = document.getElementById('clearCustomerFilter');
+    toggleCustomerMessagesBtn = document.getElementById('toggleCustomerMessagesBtn');
+    toggleCustomerMessagesText = document.getElementById('toggleCustomerMessagesText');
     
     includeThumbsUp = document.getElementById('includeThumbsUp');
     totalCustomers = document.getElementById('totalCustomers');
@@ -524,7 +525,6 @@ function setupEventListeners() {
     
     // Groups event listeners
     loadGroupsBtn.addEventListener('click', loadCustomerGroups);
-    refreshGroupsBtn.addEventListener('click', loadCustomerGroups);
     backToGroupsBtn.addEventListener('click', () => showSection('groups'));
     sendGroupMessageBtn.addEventListener('click', sendGroupMessage);
     previewGroupBtn.addEventListener('click', previewGroupMessage);
@@ -591,6 +591,12 @@ function setupEventListeners() {
     updateScheduleControls();
     renderScheduledMessages([]);
     
+    // View toggle event listener
+    const toggleViewBtn = document.getElementById('toggleViewBtn');
+    if (toggleViewBtn) {
+        toggleViewBtn.addEventListener('click', toggleMessageView);
+    }
+    
     // Emoji quick buttons event listeners
     document.querySelectorAll('.emoji-btn').forEach(button => {
         button.addEventListener('click', function() {
@@ -632,12 +638,9 @@ function setupEventListeners() {
         clearHoursFilter.addEventListener('click', clearHoursFilterFromMessages);
     }
     
-    // Customer filter event listeners
-    if (applyCustomerFilter) {
-        applyCustomerFilter.addEventListener('click', applyCustomerFilterToMessages);
-    }
-    if (clearCustomerFilter) {
-        clearCustomerFilter.addEventListener('click', clearCustomerFilterFromMessages);
+    // Customer filter toggle event listener
+    if (toggleCustomerMessagesBtn) {
+        toggleCustomerMessagesBtn.addEventListener('click', toggleCustomerMessages);
     }
     
     // Customer selector event listeners
@@ -751,7 +754,7 @@ socket.on('clientStatus', function(data) {
         
         if (data.targetPhone) {
             targetPhoneDisplay.textContent = data.targetPhone;
-            messagesSection.style.display = 'block';
+            // Messages are now part of phoneSection, so no need to show messagesSection separately
             loadMessages(data.targetPhone);
         }
     } else {
@@ -779,7 +782,6 @@ socket.on('qrCode', function(data) {
         updateStatus('connecting', 'Scan QR Code to connect');
         qrSection.style.display = 'block';
         phoneSection.style.display = 'none';
-        messagesSection.style.display = 'none';
     } else {
         console.log('✅ Client already connected, ignoring QR code');
         // Client is connected, don't show QR code
@@ -864,7 +866,6 @@ socket.on('clientDisconnected', function(data) {
         showError('WhatsApp session has been closed. Please refresh the page and scan the QR code again to reconnect.');
         qrSection.style.display = 'block';
         phoneSection.style.display = 'none';
-        messagesSection.style.display = 'none';
     } else {
         // Temporary disconnect - wait a bit to see if client auto-reconnects
         updateStatus('connecting', 'Reconnecting...');
@@ -1104,8 +1105,7 @@ function setPhoneNumbers() {
         console.log('Set phones response:', data);
         if (data.success) {
             if (data.clientReady) {
-                phoneSection.style.display = 'none';
-                messagesSection.style.display = 'block';
+                // Keep phoneSection visible - messages are now part of it
                 loadMergedMessages();
                 hideError();
             } else {
@@ -1225,6 +1225,19 @@ function loadMergedMessages() {
             // Store messages globally
             allMessages = data.messages;
             
+            // Debug: Log sample messages to see isFromMe values
+            console.log('[DEBUG] Sample messages from API:', data.messages.slice(0, 3).map(m => ({
+                id: m.id,
+                body: m.body?.substring(0, 30),
+                isFromMe: m.isFromMe,
+                senderName: m.senderName,
+                senderPhone: m.senderPhone
+            })));
+            
+            // Count messages with isFromMe
+            const fromMeInData = data.messages.filter(m => m.isFromMe === true || m.isFromMe === 'true').length;
+            console.log(`[DEBUG] Messages with isFromMe=true in API response: ${fromMeInData} out of ${data.messages.length}`);
+            
             displayMessages(data.messages);
             populateCustomerSelector(); // Populate dropdown with senders from loaded messages
             
@@ -1256,6 +1269,12 @@ function displayMessages(messages) {
     console.log('timeFilter.enabled:', timeFilter.enabled);
     console.log('timeFilter.fromDate:', timeFilter.fromDate);
     console.log('timeFilter.toDate:', timeFilter.toDate);
+    console.log('customerFilterEnabled:', customerFilterEnabled);
+    
+    // Count messages from "You" vs customers
+    const youMessages = messages.filter(m => m.isFromMe).length;
+    const customerMessages = messages.filter(m => !m.isFromMe).length;
+    console.log(`Messages breakdown: ${youMessages} from You, ${customerMessages} from customers`);
     
     messagesContainer.innerHTML = '';
     
@@ -1286,6 +1305,19 @@ function displayMessages(messages) {
     
     console.log('Displayed', displayedCount, 'messages out of', messages.length, 'total');
     
+    // Update toggle button state on initial load
+    if (toggleCustomerMessagesBtn && toggleCustomerMessagesText) {
+        if (customerFilterEnabled) {
+            toggleCustomerMessagesBtn.className = 'btn btn-success';
+            toggleCustomerMessagesText.textContent = 'Show All Messages';
+            toggleCustomerMessagesBtn.title = 'Click to show all messages (including yours)';
+        } else {
+            toggleCustomerMessagesBtn.className = 'btn btn-secondary';
+            toggleCustomerMessagesText.textContent = 'Hide My Messages';
+            toggleCustomerMessagesBtn.title = 'Click to hide your own messages';
+        }
+    }
+    
     // Show load more button and message count info
     if (loadMoreContainer && messageCountInfo) {
         loadMoreContainer.style.display = 'block';
@@ -1298,6 +1330,10 @@ function displayMessages(messages) {
             top: messagesContainer.scrollHeight,
             behavior: 'smooth'
         });
+        
+        // Apply all active filters after messages are displayed
+        // Customer filter is enabled by default, so always apply filters
+        applyAllActiveFilters();
     }, 200);
 }
 
@@ -1412,13 +1448,45 @@ function addMessageToContainer(message) {
         }
     }
     
-    // Determine sender display name
-    let senderDisplay = message.isFromMe ? 'You' : (message.senderName || 'Unknown');
-    
-    // Add chat name for context if it's different from sender
-    let chatContext = '';
-    if (message.chatName && message.chatName !== message.senderName && !message.isFromMe) {
-      chatContext = ` <span class="chat-context">(from ${message.chatName})</span>`;
+    // Determine sender display name - show name first, then phone number in brackets
+    let senderDisplay = '';
+    if (message.isFromMe) {
+        senderDisplay = 'You';
+    } else {
+        // Extract phone number from senderPhone (remove @c.us or @g.us)
+        let phoneNumber = '';
+        if (message.senderPhone && message.senderPhone !== 'Me') {
+            phoneNumber = message.senderPhone.replace('@c.us', '').replace('@g.us', '');
+        }
+        
+        // Determine the display name - prefer senderName if it's a real name (not just the phone number)
+        // Otherwise use chatName, or fall back to phone number
+        let displayName = '';
+        
+        // Check if senderName is actually a name (not just the phone number)
+        if (message.senderName && 
+            message.senderName !== phoneNumber && 
+            message.senderName !== 'Unknown' &&
+            !/^\d+$/.test(message.senderName)) { // Not just digits
+            displayName = message.senderName;
+        } else if (message.chatName && 
+                   message.chatName !== phoneNumber && 
+                   message.chatName !== 'Unknown') {
+            displayName = message.chatName;
+        } else {
+            // No name available, use phone number as display name
+            displayName = phoneNumber || 'Unknown';
+        }
+        
+        // Format: Name (phoneNumber) - always show phone in brackets when we have both name and phone
+        if (phoneNumber && phoneNumber !== '' && displayName && displayName !== phoneNumber) {
+            senderDisplay = `${displayName} <span class="chat-context">(${phoneNumber})</span>`;
+        } else if (phoneNumber && phoneNumber !== '') {
+            // Only phone number available
+            senderDisplay = phoneNumber;
+        } else {
+            senderDisplay = displayName || 'Unknown';
+        }
     }
     
     // Check if sender is from customer groups (for marking attendance)
@@ -1437,9 +1505,10 @@ function addMessageToContainer(message) {
     }
     
     messageDiv.setAttribute('data-message-id', message.id);
+    messageDiv.setAttribute('data-is-from-me', message.isFromMe ? 'true' : 'false');
     messageDiv.innerHTML = `
         <div class="message-header">
-            <span class="message-from">${senderDisplay}${chatContext}</span>
+            <span class="message-from">${senderDisplay}</span>
             <span class="message-time">${timeString}</span>
         </div>
         <div class="message-body">
@@ -1786,7 +1855,7 @@ function getSavedLists() {
 // Navigation and Section Management
 function showSection(sectionName) {
     // Hide all sections
-    document.querySelectorAll('.status-card, .qr-section, .phone-section, .messages-section, .groups-section, .group-message-section').forEach(section => {
+    document.querySelectorAll('.status-card, .qr-section, .phone-section, .groups-section, .group-message-section').forEach(section => {
         section.style.display = 'none';
     });
     
@@ -1807,48 +1876,270 @@ function showSection(sectionName) {
             }
             break;
         case 'messages':
+            // Messages are now part of phoneSection
             document.getElementById('phoneSection').style.display = 'block';
-            if (currentPhoneNumbers.length > 0) {
-                document.getElementById('messagesSection').style.display = 'block';
-            }
             break;
         case 'groups':
-            groupsSection.style.display = 'block';
-            if (Object.keys(currentGroups).length === 0) {
-                loadCustomerGroups();
+            console.log('=== showSection: groups START ===');
+            console.log('groupsSection element:', groupsSection);
+            console.log('groupsContainer element:', groupsContainer);
+            console.log('currentGroups count:', Object.keys(currentGroups).length);
+            
+            if (groupsSection) {
+                // Check state before changes
+                const beforeStyle = window.getComputedStyle(groupsSection);
+                console.log('📊 groupsSection BEFORE changes:', {
+                    display: beforeStyle.display,
+                    visibility: beforeStyle.visibility,
+                    opacity: beforeStyle.opacity,
+                    height: beforeStyle.height,
+                    width: beforeStyle.width
+                });
+                
+                groupsSection.style.display = 'block';
+                groupsSection.style.visibility = 'visible';
+                groupsSection.style.opacity = '1';
+                groupsSection.style.height = 'auto';
+                groupsSection.style.minHeight = '200px';
+                groupsSection.style.width = '100%';
+                console.log('✅ Set groupsSection inline styles');
+                
+                // Check state after changes
+                const afterStyle = window.getComputedStyle(groupsSection);
+                console.log('📊 groupsSection AFTER changes:', {
+                    display: afterStyle.display,
+                    visibility: afterStyle.visibility,
+                    opacity: afterStyle.opacity,
+                    height: afterStyle.height,
+                    width: afterStyle.width
+                });
+                
+                // Ensure loading indicator is hidden
+                if (loadingGroups) {
+                    loadingGroups.style.display = 'none';
+                    console.log('✅ Hidden loading indicator');
+                }
+                
+                // Ensure groups container is visible
+                if (groupsContainer) {
+                    const containerBeforeStyle = window.getComputedStyle(groupsContainer);
+                    console.log('📊 groupsContainer BEFORE changes:', {
+                        display: containerBeforeStyle.display,
+                        visibility: containerBeforeStyle.visibility,
+                        opacity: containerBeforeStyle.opacity
+                    });
+                    
+                    groupsContainer.style.display = 'grid';
+                    groupsContainer.style.visibility = 'visible';
+                    groupsContainer.style.opacity = '1';
+                    console.log('✅ Set groupsContainer inline styles');
+                    
+                    const containerAfterStyle = window.getComputedStyle(groupsContainer);
+                    console.log('📊 groupsContainer AFTER changes:', {
+                        display: containerAfterStyle.display,
+                        visibility: containerAfterStyle.visibility,
+                        opacity: containerAfterStyle.opacity
+                    });
+                }
+                
+                // Always try to load groups when navigating to groups section
+                if (Object.keys(currentGroups).length === 0) {
+                    console.log('📥 Loading customer groups...');
+                    loadCustomerGroups();
+                } else {
+                    // Groups already loaded, just display them
+                    console.log('✅ Groups already loaded, displaying:', Object.keys(currentGroups).length, 'groups');
+                    // Use setTimeout to ensure DOM is ready
+                    setTimeout(() => {
+                        displayGroups(currentGroups);
+                    }, 50);
+                }
+            } else {
+                console.error('❌ groupsSection element not found');
             }
+            console.log('=== showSection: groups END ===');
             break;
+        case 'group-message':
+            console.log('=== showSection: group-message START ===');
+            console.log('groupMessageSection element:', groupMessageSection);
+            
+            if (groupMessageSection) {
+                // Check state before changes
+                const beforeStyle = window.getComputedStyle(groupMessageSection);
+                console.log('📊 groupMessageSection BEFORE changes:', {
+                    display: beforeStyle.display,
+                    visibility: beforeStyle.visibility,
+                    opacity: beforeStyle.opacity,
+                    height: beforeStyle.height,
+                    width: beforeStyle.width
+                });
+                
+                // Set explicit visibility
+                groupMessageSection.style.display = 'block';
+                groupMessageSection.style.visibility = 'visible';
+                groupMessageSection.style.opacity = '1';
+                groupMessageSection.style.height = 'auto';
+                groupMessageSection.style.width = '100%';
+                console.log('✅ Set groupMessageSection inline styles');
+                
+                // Check state after changes
+                const afterStyle = window.getComputedStyle(groupMessageSection);
+                console.log('📊 groupMessageSection AFTER changes:', {
+                    display: afterStyle.display,
+                    visibility: afterStyle.visibility,
+                    opacity: afterStyle.opacity,
+                    height: afterStyle.height,
+                    width: afterStyle.width
+                });
+                
+                // Check parent chain visibility
+                console.log('🔍 Parent chain visibility check:');
+                let currentElement = groupMessageSection;
+                let level = 0;
+                while (currentElement && currentElement !== document.body && level < 6) {
+                    const computedStyle = window.getComputedStyle(currentElement);
+                    const rect = currentElement.getBoundingClientRect();
+                    console.log(`   Level ${level} (${currentElement.id || currentElement.className || currentElement.tagName}):`, {
+                        display: computedStyle.display,
+                        visibility: computedStyle.visibility,
+                        opacity: computedStyle.opacity,
+                        height: computedStyle.height,
+                        width: computedStyle.width,
+                        boundingRect: {
+                            top: rect.top,
+                            left: rect.left,
+                            width: rect.width,
+                            height: rect.height,
+                            visible: rect.width > 0 && rect.height > 0
+                        }
+                    });
+                    currentElement = currentElement.parentElement;
+                    level++;
+                }
+            } else {
+                console.error('❌ groupMessageSection element not found');
+            }
+            console.log('=== showSection: group-message END ===');
+            break;
+    }
+}
+
+// Toggle between Basic and Details View
+function toggleMessageView() {
+    const detailsContainer = document.getElementById('detailsViewContainer');
+    const toggleBtn = document.getElementById('toggleViewBtn');
+    const toggleText = document.getElementById('toggleViewText');
+    
+    if (!detailsContainer || !toggleBtn || !toggleText) {
+        console.error('Toggle view elements not found');
+        return;
+    }
+    
+    isDetailsView = !isDetailsView;
+    
+    if (isDetailsView) {
+        // Show details view
+        detailsContainer.style.display = 'block';
+        toggleText.textContent = 'Show Basic View';
+        toggleBtn.querySelector('i').className = 'fas fa-eye-slash';
+        showNotification('Details view enabled', 'info');
+    } else {
+        // Show basic view
+        detailsContainer.style.display = 'none';
+        toggleText.textContent = 'Show Details View';
+        toggleBtn.querySelector('i').className = 'fas fa-eye';
+        showNotification('Basic view enabled', 'info');
     }
 }
 
 // Customer Groups Management
 async function loadCustomerGroups() {
     try {
-        loadingGroups.style.display = 'block';
-        groupsContainer.innerHTML = '';
+        if (loadingGroups) {
+            loadingGroups.style.display = 'block';
+        }
+        if (groupsContainer) {
+            groupsContainer.innerHTML = '';
+        }
         
         const response = await fetch('/groups/load');
         const data = await response.json();
         
         if (data.success) {
             currentGroups = data.groups;
+            console.log('Groups loaded successfully:', Object.keys(currentGroups).length, 'groups');
             displayGroups(currentGroups);
             showNotification(`Loaded ${data.totalGroups} customer groups`, 'success');
         } else {
+            console.error('Failed to load groups:', data.error);
             showNotification('Failed to load groups: ' + data.error, 'error');
         }
     } catch (error) {
         console.error('Error loading groups:', error);
         showNotification('Error loading customer groups', 'error');
     } finally {
-        loadingGroups.style.display = 'none';
+        if (loadingGroups) {
+            loadingGroups.style.display = 'none';
+        }
     }
 }
 
 function displayGroups(groups) {
-    groupsContainer.innerHTML = '';
+    console.log('=== displayGroups START ===');
+    console.log('groupsContainer element:', groupsContainer);
+    console.log('groupsSection element:', groupsSection);
     
-    if (Object.keys(groups).length === 0) {
+    if (!groupsContainer) {
+        console.error('❌ groupsContainer element not found!');
+        return;
+    }
+    
+    // Check initial state
+    const initialContainerStyle = window.getComputedStyle(groupsContainer);
+    console.log('📊 Initial groupsContainer computed styles:', {
+        display: initialContainerStyle.display,
+        visibility: initialContainerStyle.visibility,
+        opacity: initialContainerStyle.opacity,
+        height: initialContainerStyle.height,
+        width: initialContainerStyle.width,
+        position: initialContainerStyle.position,
+        zIndex: initialContainerStyle.zIndex
+    });
+    
+    if (groupsSection) {
+        const initialSectionStyle = window.getComputedStyle(groupsSection);
+        console.log('📊 Initial groupsSection computed styles:', {
+            display: initialSectionStyle.display,
+            visibility: initialSectionStyle.visibility,
+            opacity: initialSectionStyle.opacity,
+            height: initialSectionStyle.height,
+            width: initialSectionStyle.width,
+            position: initialSectionStyle.position,
+            zIndex: initialSectionStyle.zIndex
+        });
+    }
+    
+    // Ensure container is visible
+    groupsContainer.style.display = 'grid';
+    groupsContainer.style.visibility = 'visible';
+    groupsContainer.style.opacity = '1';
+    groupsContainer.style.height = 'auto';
+    groupsContainer.style.minHeight = '200px';
+    groupsContainer.style.width = '100%';
+    console.log('✅ Set groupsContainer inline styles');
+    
+    // Hide loading indicator
+    if (loadingGroups) {
+        loadingGroups.style.display = 'none';
+        console.log('✅ Hidden loading indicator');
+    }
+    
+    // Clear container
+    const beforeClear = groupsContainer.innerHTML.length;
+    groupsContainer.innerHTML = '';
+    console.log(`🧹 Cleared container (was ${beforeClear} chars)`);
+    
+    if (!groups || Object.keys(groups).length === 0) {
         groupsContainer.innerHTML = `
             <div class="no-groups">
                 <i class="fas fa-users"></i>
@@ -1856,31 +2147,119 @@ function displayGroups(groups) {
                 <p>Click "Load from Google Sheets" to import your customer groups.</p>
             </div>
         `;
+        console.log('⚠️ No groups to display');
         return;
     }
     
-    Object.values(groups).forEach(group => {
+    console.log('📦 Displaying', Object.keys(groups).length, 'groups');
+    
+    Object.values(groups).forEach((group, index) => {
         const groupCard = document.createElement('div');
         groupCard.className = 'group-card';
+        groupCard.style.display = 'block';
+        groupCard.style.visibility = 'visible';
+        groupCard.style.opacity = '1';
         groupCard.innerHTML = `
             <div class="group-header">
                 <h3 class="group-name">${group.name}</h3>
                 <span class="group-count">${group.totalCustomers}</span>
             </div>
             <div class="group-actions">
-                <button class="btn btn-primary" onclick="viewGroupDetails('${group.name}')">
-                    <i class="fas fa-eye"></i> View
-                </button>
                 <button class="btn btn-success" onclick="sendMessageToGroup('${group.name}')">
                     <i class="fas fa-paper-plane"></i> Send Message
-                </button>
-                <button class="btn btn-info" onclick="checkAbsentees('${group.name}')">
-                    <i class="fas fa-user-times"></i> Check Absentees
                 </button>
             </div>
         `;
         groupsContainer.appendChild(groupCard);
+        console.log(`✅ Added group card ${index + 1}: ${group.name}`);
+        
+        // Check card styles immediately after appending
+        const cardStyle = window.getComputedStyle(groupCard);
+        console.log(`   Card ${index + 1} computed styles:`, {
+            display: cardStyle.display,
+            visibility: cardStyle.visibility,
+            opacity: cardStyle.opacity,
+            height: cardStyle.height,
+            width: cardStyle.width,
+            backgroundColor: cardStyle.backgroundColor
+        });
     });
+    
+    console.log('📊 After adding all cards:');
+    console.log('   groupsContainer.children.length:', groupsContainer.children.length);
+    console.log('   groupsContainer.innerHTML.length:', groupsContainer.innerHTML.length);
+    
+    // Check final computed styles
+    const finalContainerStyle = window.getComputedStyle(groupsContainer);
+    console.log('📊 Final groupsContainer computed styles:', {
+        display: finalContainerStyle.display,
+        visibility: finalContainerStyle.visibility,
+        opacity: finalContainerStyle.opacity,
+        height: finalContainerStyle.height,
+        width: finalContainerStyle.width,
+        gridTemplateColumns: finalContainerStyle.gridTemplateColumns,
+        gap: finalContainerStyle.gap
+    });
+    
+    if (groupsSection) {
+        const finalSectionStyle = window.getComputedStyle(groupsSection);
+        console.log('📊 Final groupsSection computed styles:', {
+            display: finalSectionStyle.display,
+            visibility: finalSectionStyle.visibility,
+            opacity: finalSectionStyle.opacity,
+            height: finalSectionStyle.height,
+            width: finalSectionStyle.width
+        });
+    }
+    
+    // Check parent chain
+    console.log('🔍 Parent chain visibility check:');
+    let currentElement = groupsContainer;
+    let level = 0;
+    while (currentElement && currentElement !== document.body && level < 6) {
+        const computedStyle = window.getComputedStyle(currentElement);
+        const rect = currentElement.getBoundingClientRect();
+        console.log(`   Level ${level} (${currentElement.id || currentElement.className || currentElement.tagName}):`, {
+            display: computedStyle.display,
+            visibility: computedStyle.visibility,
+            opacity: computedStyle.opacity,
+            height: computedStyle.height,
+            width: computedStyle.width,
+            position: computedStyle.position,
+            zIndex: computedStyle.zIndex,
+            boundingRect: {
+                top: rect.top,
+                left: rect.left,
+                width: rect.width,
+                height: rect.height,
+                visible: rect.width > 0 && rect.height > 0
+            }
+        });
+        currentElement = currentElement.parentElement;
+        level++;
+    }
+    
+    // Check if first card is actually in DOM and visible
+    if (groupsContainer.children.length > 0) {
+        const firstCard = groupsContainer.children[0];
+        const firstCardRect = firstCard.getBoundingClientRect();
+        console.log('🔍 First card details:', {
+            element: firstCard,
+            className: firstCard.className,
+            innerHTML: firstCard.innerHTML.substring(0, 100),
+            boundingRect: {
+                top: firstCardRect.top,
+                left: firstCardRect.left,
+                width: firstCardRect.width,
+                height: firstCardRect.height,
+                visible: firstCardRect.width > 0 && firstCardRect.height > 0
+            },
+            isConnected: firstCard.isConnected,
+            offsetParent: firstCard.offsetParent
+        });
+    }
+    
+    console.log('=== displayGroups END ===');
 }
 
 // Function removed - no longer using collapsible view
@@ -1981,21 +2360,39 @@ async function ensureGroupCustomersLoaded(groupName) {
 }
 
 async function sendMessageToGroup(groupName) {
+    console.log('📤 sendMessageToGroup called for:', groupName);
     selectedGroup = groupName;
     updateScheduleControls();
 
     let group = currentGroups[groupName];
     if (!group) {
+        console.log('⚠️ Group not in currentGroups, loading...');
         group = await ensureGroupCustomersLoaded(groupName);
         if (!group) {
+            console.error('❌ Failed to load group:', groupName);
+            showNotification(`Failed to load group: ${groupName}`, 'error');
             return;
         }
     }
 
+    console.log('✅ Group loaded:', group.name, 'with', group.customers.length, 'customers');
     displayGroupRecipients(group);
 
+    console.log('🔄 Showing group-message section...');
     showSection('group-message');
-    groupMessageSection.style.display = 'block';
+    if (groupMessageSection) {
+        groupMessageSection.style.display = 'block';
+        groupMessageSection.style.visibility = 'visible';
+        groupMessageSection.style.opacity = '1';
+        // Scroll into view
+        setTimeout(() => {
+            groupMessageSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+        console.log('✅ groupMessageSection displayed and scrolled into view');
+    } else {
+        console.error('❌ groupMessageSection element not found!');
+        showNotification('Group message section not found', 'error');
+    }
 
     await loadSchedulesForGroup(groupName);
 }
@@ -2280,6 +2677,13 @@ function updateScheduleRecurrenceUI() {
     }
 
     const recurrence = getSelectedScheduleRecurrence();
+    
+    // Show/hide end date/time section - hide for "once" recurrence
+    const scheduleEndSection = document.getElementById('scheduleEndSection');
+    if (scheduleEndSection) {
+        scheduleEndSection.style.display = recurrence === 'once' ? 'none' : 'flex';
+    }
+    
     if (scheduleWeeklyOptions) {
         scheduleWeeklyOptions.style.display = recurrence === 'weekly' ? 'block' : 'none';
         if (recurrence === 'weekly') {
@@ -3300,33 +3704,37 @@ function filterMessagesByHours() {
     showNotification(`Showing ${visibleCount} messages from the last ${hoursFilterValue} hours (${hiddenCount} hidden)`, 'info');
 }
 
-// Apply customer filter to messages
-function applyCustomerFilterToMessages() {
+// Toggle customer messages filter
+function toggleCustomerMessages() {
     try {
-        customerFilterEnabled = true;
+        customerFilterEnabled = !customerFilterEnabled;
         
-        // Filter and display messages
+        // Update button appearance and text
+        if (toggleCustomerMessagesBtn && toggleCustomerMessagesText) {
+            if (customerFilterEnabled) {
+                // Show only customer messages
+                toggleCustomerMessagesBtn.className = 'btn btn-success';
+                toggleCustomerMessagesText.textContent = 'Show All Messages';
+                toggleCustomerMessagesBtn.title = 'Click to show all messages (including yours)';
+            } else {
+                // Show all messages
+                toggleCustomerMessagesBtn.className = 'btn btn-secondary';
+                toggleCustomerMessagesText.textContent = 'Hide My Messages';
+                toggleCustomerMessagesBtn.title = 'Click to hide your own messages';
+            }
+        }
+        
+        // Apply filter
         filterMessagesByCustomer();
         
-        showNotification('Showing only customer messages', 'success');
+        if (customerFilterEnabled) {
+            showNotification('Showing only customer messages', 'info');
+        } else {
+            showNotification('Showing all messages', 'info');
+        }
     } catch (error) {
-        console.error('Error applying customer filter:', error);
-        showNotification('Error applying customer filter', 'error');
-    }
-}
-
-// Clear customer filter
-function clearCustomerFilterFromMessages() {
-    try {
-        customerFilterEnabled = false;
-        
-        // Reapply other active filters
-        applyAllActiveFilters();
-        
-        showNotification('Customer filter cleared', 'success');
-    } catch (error) {
-        console.error('Error clearing customer filter:', error);
-        showNotification('Error clearing customer filter', 'error');
+        console.error('Error toggling customer filter:', error);
+        showNotification('Error toggling customer filter', 'error');
     }
 }
 
@@ -3421,8 +3829,7 @@ function filterMessagesByCustomerSelector() {
     // Apply other filters first
     if (customerFilterEnabled) {
         filteredMessages = filteredMessages.filter(msg => {
-            const isIncoming = !msg.fromMe;
-            return isIncoming;
+            return !msg.isFromMe; // Use isFromMe property
         });
     }
     
@@ -3444,7 +3851,23 @@ function filterMessagesByCustomerSelector() {
 function filterMessagesByCustomer() {
     if (!customerFilterEnabled) {
         // Clear customer filter - show all messages that match other active filters
-        applyAllActiveFilters();
+        // First, show ALL message elements (including previously hidden ones)
+        const messageElements = messagesContainer.querySelectorAll('.message');
+        messageElements.forEach(messageElement => {
+            messageElement.style.display = 'block';
+        });
+        // Then apply other active filters (but not customer filter)
+        if (timeFilter.enabled) {
+            filterMessagesByTime();
+        }
+        if (hoursFilterEnabled) {
+            filterMessagesByHours();
+        }
+        if (textFilterEnabled) {
+            filterMessagesByText();
+        }
+        // Don't apply customer filter since it's disabled
+        console.log('Customer filter disabled - showing all messages');
         return;
     }
     
@@ -3459,37 +3882,30 @@ function filterMessagesByCustomer() {
     let hiddenCount = 0;
     
     messageElements.forEach(messageElement => {
-        const messageHeaderElement = messageElement.querySelector('.message-header');
-        if (!messageHeaderElement) {
-            // Don't change display - let other filters handle it
-            return;
-        }
+        // Get isFromMe from data attribute
+        const isFromMe = messageElement.getAttribute('data-is-from-me') === 'true';
         
-        const senderElement = messageHeaderElement.querySelector('.message-from');
-        const senderName = senderElement ? senderElement.textContent : '';
-        
-        // Check if message is from a customer (not from you)
-        const isFromCustomer = !senderName.includes('You') && 
-                               !senderName.includes('Me') && 
-                               senderName.trim() !== '';
-        
-        // Get current display status (to preserve other filter states)
-        const currentDisplay = messageElement.style.display;
-        
-        // Only hide if currently visible and not from customer
-        if (currentDisplay !== 'none') {
-            if (isFromCustomer) {
-                // Keep visible if it matches customer filter
+        // Process ALL messages, not just visible ones
+        // This ensures messages hidden by previous filter states are properly handled
+        if (isFromMe) {
+            // Hide messages from "You"
+            messageElement.style.display = 'none';
+            hiddenCount++;
+        } else {
+            // Show messages from customers
+            // But check if they should be visible based on other filters
+            // If they were hidden by other filters, keep them hidden
+            // Otherwise, show them
+            const wasHiddenByOtherFilter = messageElement.style.display === 'none' && 
+                                          (timeFilter.enabled || hoursFilterEnabled || textFilterEnabled);
+            if (!wasHiddenByOtherFilter) {
                 messageElement.style.display = 'block';
                 visibleCount++;
-            } else {
-                // Hide if not from customer
-                messageElement.style.display = 'none';
-                hiddenCount++;
             }
         }
     });
     
+    console.log(`Customer filter enabled - showing ${visibleCount} customer messages, hiding ${hiddenCount} from You`);
     showNotification(`Showing ${visibleCount} customer messages (${hiddenCount} hidden)`, 'info');
 }
 
@@ -4077,7 +4493,10 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
         let foundGroup = selectedGroup;
         console.log(`[ATTENDANCE] Selected group: ${selectedGroup || '(none)'}`);
         
-        // If no selected group, find which groups this customer belongs to
+        // Find customer and group information
+        let customerName = customerPhone; // Default to phone if name not found
+        let foundCustomer = null;
+        
         if (!foundGroup) {
             Object.keys(currentGroups).forEach(groupName => {
                 const group = currentGroups[groupName];
@@ -4090,9 +4509,24 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
                     });
                     if (customer && !foundGroup) {
                         foundGroup = groupName; // Use first match
+                        foundCustomer = customer;
+                        customerName = customer.name || customerPhone;
                     }
                 }
             });
+        } else {
+            // If group is already selected, find customer in that group
+            const group = currentGroups[foundGroup];
+            if (group && group.customers && Array.isArray(group.customers)) {
+                foundCustomer = group.customers.find(c => {
+                    const cleanCustomerPhone = c.phone.replace(/\D/g, '');
+                    const cleanMessagePhone = customerPhone.replace(/\D/g, '');
+                    return cleanCustomerPhone === cleanMessagePhone;
+                });
+                if (foundCustomer) {
+                    customerName = foundCustomer.name || customerPhone;
+                }
+            }
         }
         
         if (!foundGroup) {
@@ -4100,10 +4534,31 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
             return;
         }
         
+        // Determine the date from message timestamp or use current date
+        let attendanceDate;
+        let dateDisplay;
+        if (messageTimestamp) {
+            const messageDate = new Date(messageTimestamp * 1000);
+            attendanceDate = messageDate.toISOString().slice(0, 10); // YYYY-MM-DD
+            dateDisplay = messageDate.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            });
+        } else {
+            const today = new Date();
+            attendanceDate = today.toISOString().slice(0, 10);
+            dateDisplay = today.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            });
+        }
+        
         // Use current month (YYYY-MM format)
         const currentMonth = new Date().toISOString().slice(0, 7);
         
-        console.log(`[ATTENDANCE] Using group: ${foundGroup}, Customer: ${customerPhone}, Message: ${messageBody ? messageBody.substring(0, 50) : '(none)'}`);
+        console.log(`[ATTENDANCE] Using group: ${foundGroup}, Customer: ${customerName} (${customerPhone}), Date: ${attendanceDate}, Message: ${messageBody ? messageBody.substring(0, 50) : '(none)'}`);
         
         // Call the attendance endpoint with message content
         const response = await fetch(`/groups/${foundGroup}/attendance`, {
@@ -4123,7 +4578,7 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
         const data = await response.json();
         
         if (data.success) {
-            showNotification(`Attendance marked for customer (month: ${currentMonth})`, 'success');
+            showNotification(`✅ Attendance marked: ${customerName} - ${dateDisplay} (${foundGroup})`, 'success');
         } else {
             showNotification('Failed to mark attendance: ' + data.error, 'error');
         }
@@ -4160,31 +4615,212 @@ async function confirmCodeFromMessage(customerPhone, messageTimestamp, messageBo
             return;
         }
 
-        console.log(`[CODE] Logging code confirmation for group: ${foundGroup}, customer: ${customerPhone}`);
-
-        const response = await fetch(`/groups/${foundGroup}/code-confirm`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                customerPhone: customerPhone,
-                message: messageBody,
-                messageTimestamp: messageTimestamp ? parseInt(messageTimestamp) : null
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showNotification('Code confirmed and logged to CodeMonitor.', 'success');
-        } else {
-            showNotification('Failed to confirm code: ' + (data.error || 'Unknown error'), 'error');
-        }
+        // Show modal for code selection/entry
+        showCodeSelectionModal(foundGroup, customerPhone, messageBody, messageTimestamp);
     } catch (error) {
         console.error('Error confirming code:', error);
         showNotification('Error confirming code', 'error');
     }
+}
+
+// Show modal for code selection/entry
+async function showCodeSelectionModal(groupName, customerPhone, messageBody, messageTimestamp) {
+    // Create modal overlay
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay code-selection-modal';
+    modal.innerHTML = `
+        <div class="modal-content code-modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-key"></i> Confirm Code</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="code-selection-loading" style="text-align: center; padding: 20px;">
+                    <i class="fas fa-spinner fa-spin"></i> Loading codes...
+                </div>
+                <div class="code-selection-form" style="display: none;">
+                    <div class="code-option-group" style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 10px; font-weight: 600;">
+                            <input type="radio" name="codeOption" value="existing" checked style="margin-right: 8px;">
+                            Select from existing codes
+                        </label>
+                        <label style="display: block; margin-bottom: 10px; font-weight: 600;">
+                            <input type="radio" name="codeOption" value="new" style="margin-right: 8px;">
+                            Enter new code
+                        </label>
+                    </div>
+                    
+                    <div class="existing-code-section" id="existingCodeSection">
+                        <label for="codeSelect" style="display: block; margin-bottom: 8px; font-weight: 600;">Select Code:</label>
+                        <select id="codeSelect" class="code-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                            <option value="">-- Select a code --</option>
+                        </select>
+                    </div>
+                    
+                    <div class="new-code-section" id="newCodeSection" style="display: none;">
+                        <label for="newCodeInput" style="display: block; margin-bottom: 8px; font-weight: 600;">Enter Code:</label>
+                        <input type="text" id="newCodeInput" class="code-input" placeholder="Enter code manually" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                    </div>
+                </div>
+                <div class="code-selection-error" style="display: none; color: #dc3545; margin-top: 10px; padding: 10px; background: #f8d7da; border-radius: 4px;"></div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid #dee2e6;">
+                <button class="btn btn-secondary code-modal-cancel">Cancel</button>
+                <button class="btn btn-primary code-modal-confirm" disabled>
+                    <i class="fas fa-check"></i> Confirm
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Close modal handlers
+    const closeModal = () => {
+        if (modal.parentNode) {
+            modal.parentNode.removeChild(modal);
+        }
+    };
+    
+    modal.querySelector('.modal-close').addEventListener('click', closeModal);
+    modal.querySelector('.code-modal-cancel').addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+    
+    // Fetch codes from API
+    let codes = [];
+    try {
+        const response = await fetch('/api/codes/list');
+        const data = await response.json();
+        
+        if (data.success && data.codes && data.codes.length > 0) {
+            codes = data.codes;
+        }
+    } catch (error) {
+        console.error('Error fetching codes:', error);
+    }
+    
+    // Hide loading, show form
+    modal.querySelector('.code-selection-loading').style.display = 'none';
+    const form = modal.querySelector('.code-selection-form');
+    form.style.display = 'block';
+    
+    // Populate existing codes dropdown
+    const codeSelect = modal.querySelector('#codeSelect');
+    if (codes.length > 0) {
+        codes.forEach(code => {
+            const option = document.createElement('option');
+            option.value = code;
+            option.textContent = code;
+            codeSelect.appendChild(option);
+        });
+    } else {
+        codeSelect.innerHTML = '<option value="">No codes found in Code Monitor sheet</option>';
+    }
+    
+    // Radio button change handler
+    const radioButtons = modal.querySelectorAll('input[name="codeOption"]');
+    const existingSection = modal.querySelector('#existingCodeSection');
+    const newSection = modal.querySelector('#newCodeSection');
+    const confirmBtn = modal.querySelector('.code-modal-confirm');
+    
+    radioButtons.forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (radio.value === 'existing') {
+                existingSection.style.display = 'block';
+                newSection.style.display = 'none';
+                codeSelect.focus();
+            } else {
+                existingSection.style.display = 'none';
+                newSection.style.display = 'block';
+                modal.querySelector('#newCodeInput').focus();
+            }
+            updateConfirmButtonState();
+        });
+    });
+    
+    // Update confirm button state
+    function updateConfirmButtonState() {
+        const selectedOption = modal.querySelector('input[name="codeOption"]:checked').value;
+        let isValid = false;
+        
+        if (selectedOption === 'existing') {
+            isValid = codeSelect.value && codeSelect.value.trim() !== '';
+        } else {
+            const newCode = modal.querySelector('#newCodeInput').value;
+            isValid = newCode && newCode.trim() !== '';
+        }
+        
+        confirmBtn.disabled = !isValid;
+    }
+    
+    // Add event listeners for input changes
+    codeSelect.addEventListener('change', updateConfirmButtonState);
+    modal.querySelector('#newCodeInput').addEventListener('input', updateConfirmButtonState);
+    
+    // Confirm button handler
+    confirmBtn.addEventListener('click', async () => {
+        const selectedOption = modal.querySelector('input[name="codeOption"]:checked').value;
+        let code = '';
+        
+        if (selectedOption === 'existing') {
+            code = codeSelect.value.trim();
+        } else {
+            code = modal.querySelector('#newCodeInput').value.trim();
+        }
+        
+        if (!code) {
+            const errorDiv = modal.querySelector('.code-selection-error');
+            errorDiv.textContent = 'Please select or enter a code';
+            errorDiv.style.display = 'block';
+            return;
+        }
+        
+        // Disable confirm button and show loading
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Confirming...';
+        
+        try {
+            const response = await fetch(`/groups/${encodeURIComponent(groupName)}/code-confirm`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    customerPhone: customerPhone,
+                    message: messageBody,
+                    messageTimestamp: messageTimestamp ? parseInt(messageTimestamp) : null,
+                    code: code
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showNotification(`Code "${code}" confirmed and logged to CodeMonitor.`, 'success');
+                closeModal();
+            } else {
+                const errorDiv = modal.querySelector('.code-selection-error');
+                errorDiv.textContent = data.error || 'Failed to confirm code';
+                errorDiv.style.display = 'block';
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = '<i class="fas fa-check"></i> Confirm';
+            }
+        } catch (error) {
+            console.error('Error confirming code:', error);
+            const errorDiv = modal.querySelector('.code-selection-error');
+            errorDiv.textContent = 'Error confirming code: ' + error.message;
+            errorDiv.style.display = 'block';
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="fas fa-check"></i> Confirm';
+        }
+    });
+    
+    // Initial state
+    updateConfirmButtonState();
 }
 
 // Enhanced Time Filter Functions

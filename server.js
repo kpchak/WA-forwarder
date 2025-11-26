@@ -22,6 +22,15 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json({ limit: '50mb' })); // Increase limit for large media files
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Disable caching for script.js to ensure fresh code loads
+app.use('/script.js', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 app.use(express.static('public'));
 
 // WhatsApp client setup
@@ -260,11 +269,14 @@ app.get('/messages/:phoneNumber', async (req, res) => {
     const recentMessages = messages.filter(msg => {
       const messageDate = (msg.timestamp || 0) * 1000; // to ms
       const isWithinTimeRange = messageDate >= sinceMs;
-      const isIncoming = !msg.fromMe; // Only show messages received from customers, not sent to them
-      return isWithinTimeRange && isIncoming;
+      // Include both incoming and outgoing messages - client will handle filtering
+      return isWithinTimeRange;
     });
     
-    console.log(`Recent messages (last ${days} days):`, recentMessages.length);
+    // Debug: Count fromMe messages
+    const fromMeCount = recentMessages.filter(msg => msg.fromMe).length;
+    const fromCustomerCount = recentMessages.filter(msg => !msg.fromMe).length;
+    console.log(`[DEBUG] Recent messages (last ${days} days): ${recentMessages.length} total (${fromMeCount} from You, ${fromCustomerCount} from customers)`);
     if (messages.length > 0) {
       const oldest = new Date(Math.min(...messages.map(m => (m.timestamp || 0) * 1000))).toLocaleString();
       const newest = new Date(Math.max(...messages.map(m => (m.timestamp || 0) * 1000))).toLocaleString();
@@ -400,6 +412,13 @@ async function handleMergedMessagesRequest(req, res) {
         console.log('Fetching messages from contact/group ID:', chatId);
 
         console.log(`Getting chat for ID: ${chatId}`);
+        
+        // Check if client is still ready before attempting to get chat
+        if (!isClientReady) {
+          console.error(`Client not ready when trying to fetch chat for ${chatId}`);
+          throw new Error('WhatsApp client not ready. Session may have been closed.');
+        }
+        
         const chat = await client.getChatById(chatId);
         const chatName = chat?.name || 'Unknown';
         console.log('Chat found:', chatName);
@@ -475,8 +494,8 @@ async function handleMergedMessagesRequest(req, res) {
         const recentMessages = messages.filter(msg => {
           const messageDate = msg.timestamp * 1000;
           const isWithinTimeRange = timeFilterStart === 0 || (messageDate >= timeFilterStart && messageDate <= timeFilterEnd);
-          const isIncoming = !msg.fromMe; // Only show messages received from customers, not sent to them
-          return isWithinTimeRange && isIncoming;
+          // Include both incoming and outgoing messages - client will handle filtering
+          return isWithinTimeRange;
         });
 
         if (timeFilterStart > 0 && timeFilterEnd > 0) {
@@ -506,6 +525,11 @@ async function handleMergedMessagesRequest(req, res) {
           console.log(`No recent messages found for ${phoneNumber}`);
         }
 
+        // Debug: Count fromMe messages
+        const fromMeCount = recentMessages.filter(msg => msg.fromMe).length;
+        const fromCustomerCount = recentMessages.filter(msg => !msg.fromMe).length;
+        console.log(`[DEBUG] Messages from ${phoneNumber}: ${fromMeCount} from You, ${fromCustomerCount} from customers`);
+
         // Process messages and add to allMessages
         for (const msg of recentMessages) {
           // Skip if we've already seen this message (by ID)
@@ -520,6 +544,7 @@ async function handleMergedMessagesRequest(req, res) {
           let senderPhone = '';
 
           if (msg.fromMe) {
+            console.log(`[DEBUG] Processing message from You: ${msg.body?.substring(0, 50)}...`);
             senderName = 'You';
             senderPhone = 'Me';
           } else {
@@ -572,7 +597,39 @@ async function handleMergedMessagesRequest(req, res) {
       } catch (error) {
         console.error(`Error fetching messages from ${phoneNumber}:`, error);
         console.error('Full error details:', error.message);
-        // Continue with other phone numbers even if one fails
+        
+        // Check if it's a session closed error
+        const isSessionClosed = error.message?.includes('Session closed') || 
+                               error.message?.includes('Protocol error') ||
+                               error.message?.includes('Runtime.callFunctionOn');
+        
+        if (isSessionClosed) {
+          console.error('⚠️ WhatsApp session has been closed. Stopping message fetch.');
+          // Update client status
+          isClientReady = false;
+          
+          // Emit disconnect event
+          if (io && io.engine && io.engine.clientsCount > 0) {
+            io.emit('clientDisconnected', {
+              reason: 'Session closed',
+              requiresReconnect: true
+            });
+          }
+          
+          // Return error response
+          clearTimeout(timeout);
+          if (!res.headersSent) {
+            return res.status(503).json({
+              error: 'WhatsApp session has been closed',
+              message: 'Please refresh the page and scan the QR code again to reconnect.',
+              requiresReconnect: true
+            });
+          }
+          return;
+        }
+        
+        // For other errors, continue with other phone numbers
+        console.log(`Continuing with other contacts despite error for ${phoneNumber}...`);
       }
 
       // Add a small delay between requests to prevent overwhelming the API
@@ -602,12 +659,38 @@ async function handleMergedMessagesRequest(req, res) {
     console.error('Error fetching merged messages:', error);
     clearTimeout(timeout);
 
+    // Check if it's a session closed error
+    const isSessionClosed = error.message?.includes('Session closed') || 
+                           error.message?.includes('Protocol error') ||
+                           error.message?.includes('Runtime.callFunctionOn');
+    
+    if (isSessionClosed) {
+      console.error('⚠️ WhatsApp session has been closed.');
+      isClientReady = false;
+      
+      // Emit disconnect event
+      if (io && io.engine && io.engine.clientsCount > 0) {
+        io.emit('clientDisconnected', {
+          reason: 'Session closed',
+          requiresReconnect: true
+        });
+      }
+    }
+
     // Check if response was already sent (by timeout)
     if (!res.headersSent) {
-      res.status(500).json({
-        error: 'Failed to fetch merged messages',
-        details: error.message
-      });
+      if (isSessionClosed) {
+        res.status(503).json({
+          error: 'WhatsApp session has been closed',
+          message: 'Please refresh the page and scan the QR code again to reconnect.',
+          requiresReconnect: true
+        });
+      } else {
+        res.status(500).json({
+          error: 'Failed to fetch merged messages',
+          details: error.message
+        });
+      }
     }
   }
 }
@@ -1679,7 +1762,7 @@ app.post('/groups/:groupName/attendance', async (req, res) => {
 app.post('/groups/:groupName/code-confirm', async (req, res) => {
   try {
     const groupName = req.params.groupName;
-    const { customerPhone, message = '', messageTimestamp = null } = req.body || {};
+    const { customerPhone, message = '', messageTimestamp = null, code = '' } = req.body || {};
 
     if (!customerPhone) {
       return res.status(400).json({
@@ -1688,7 +1771,14 @@ app.post('/groups/:groupName/code-confirm', async (req, res) => {
       });
     }
 
-    const result = await recordCodeConfirmation(groupName, customerPhone, message, messageTimestamp);
+    if (!code || code.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'Code is required'
+      });
+    }
+
+    const result = await recordCodeConfirmation(groupName, customerPhone, message, messageTimestamp, code);
 
     if (result.success) {
       res.json({
@@ -1709,6 +1799,140 @@ app.post('/groups/:groupName/code-confirm', async (req, res) => {
       success: false,
       error: 'Failed to confirm code',
       details: error.message
+    });
+  }
+});
+
+// Get list of codes from Code Monitor sheet
+app.get('/api/codes/list', async (req, res) => {
+  try {
+    const sheets = await initializeGoogleSheets();
+    if (!sheets) {
+      return res.status(500).json({
+        success: false,
+        error: 'Google Sheets not initialized',
+        codes: []
+      });
+    }
+
+    // Get all sheet names
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId
+    });
+    const sheetNames = spreadsheet.data.sheets.map(sheet => sheet.properties.title);
+
+    // Try to find "Code Monitor" or "CodeMonitor" sheet
+    let codeSheetName = null;
+    if (sheetNames.includes('Code Monitor')) {
+      codeSheetName = 'Code Monitor';
+    } else if (sheetNames.includes('CodeMonitor')) {
+      codeSheetName = 'CodeMonitor';
+    }
+
+    if (!codeSheetName) {
+      // Sheet doesn't exist, return empty list
+      return res.json({
+        success: true,
+        codes: [],
+        message: 'Code Monitor sheet not found'
+      });
+    }
+
+    // Read the sheet data
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+      range: `${codeSheetName}!A:Z`
+    });
+
+    const rows = response.data.values || [];
+    console.log(`[CODES] Retrieved ${rows.length} rows from sheet "${codeSheetName}"`);
+    if (rows.length === 0) {
+      console.log(`[CODES] Sheet is empty`);
+      return res.json({
+        success: true,
+        codes: [],
+        message: 'Code Monitor sheet is empty'
+      });
+    }
+    
+    if (rows.length === 1) {
+      console.log(`[CODES] Sheet only has header row, no data rows`);
+      return res.json({
+        success: true,
+        codes: [],
+        message: 'Code Monitor sheet has no data rows'
+      });
+    }
+
+    // Find the "Code" column header (case-insensitive)
+    const headerRow = rows[0];
+    console.log(`[CODES] Header row:`, headerRow);
+    let codeColumnIndex = -1;
+    for (let i = 0; i < headerRow.length; i++) {
+      const headerValue = headerRow[i];
+      if (headerValue) {
+        const headerLower = headerValue.toString().toLowerCase().trim();
+        console.log(`[CODES] Checking header[${i}]: "${headerValue}" -> "${headerLower}"`);
+        if (headerLower === 'code') {
+          codeColumnIndex = i;
+          console.log(`[CODES] Found "Code" column at index ${i}`);
+          break;
+        }
+      }
+    }
+
+    if (codeColumnIndex === -1) {
+      // Code column not found
+      console.log(`[CODES] Code column not found. Available headers:`, headerRow);
+      return res.json({
+        success: true,
+        codes: [],
+        message: 'Code column not found in Code Monitor sheet',
+        availableHeaders: headerRow
+      });
+    }
+
+    // Extract unique codes from the column (skip header row)
+    const codesSet = new Set();
+    console.log(`[CODES] Found Code column at index ${codeColumnIndex}`);
+    console.log(`[CODES] Total rows in sheet: ${rows.length}`);
+    console.log(`[CODES] Sheet name: ${codeSheetName}`);
+    
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row) {
+        console.log(`[CODES] Row ${i} is empty, skipping`);
+        continue;
+      }
+      if (row.length <= codeColumnIndex) {
+        console.log(`[CODES] Row ${i} has only ${row.length} columns, need index ${codeColumnIndex}, skipping`);
+        continue; // Skip rows that don't have enough columns
+      }
+      const codeValue = row[codeColumnIndex];
+      if (codeValue !== undefined && codeValue !== null && codeValue.toString().trim() !== '') {
+        const trimmedCode = codeValue.toString().trim();
+        codesSet.add(trimmedCode);
+        console.log(`[CODES] Row ${i}: Found code "${trimmedCode}"`);
+      } else {
+        console.log(`[CODES] Row ${i}: Code value is empty or null (value: ${codeValue})`);
+      }
+    }
+
+    // Convert to sorted array
+    const codes = Array.from(codesSet).sort();
+    console.log(`[CODES] Returning ${codes.length} unique codes:`, codes);
+
+    res.json({
+      success: true,
+      codes: codes
+    });
+  } catch (error) {
+    console.error('Error fetching codes from Code Monitor:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch codes',
+      details: error.message,
+      codes: []
     });
   }
 });
@@ -2180,7 +2404,7 @@ async function writeAttendanceToSheet(groupName, memberName, memberPhone, messag
   }
 }
 
-async function recordCodeConfirmation(groupName, customerPhone, message = '', messageTimestamp = null) {
+async function recordCodeConfirmation(groupName, customerPhone, message = '', messageTimestamp = null, code = '') {
   try {
     await ensureGroupData();
     const sheets = await initializeGoogleSheets();
@@ -2218,6 +2442,7 @@ async function recordCodeConfirmation(groupName, customerPhone, message = '', me
     const date = `${year}-${month}-${day}`;
     const time = timestamp.toTimeString().split(' ')[0];
 
+    // Prepare row data: Date, Time, Group, Member, Phone, Message, Timezone, Code
     const rowData = [
       date,
       time,
@@ -2225,7 +2450,8 @@ async function recordCodeConfirmation(groupName, customerPhone, message = '', me
       memberName,
       memberPhone,
       message || '',
-      `${timezone} (UTC${offsetString})`
+      `${timezone} (UTC${offsetString})`,
+      code || ''
     ];
 
     const spreadsheet = await sheets.spreadsheets.get({
@@ -2235,6 +2461,7 @@ async function recordCodeConfirmation(groupName, customerPhone, message = '', me
     const codeSheetExists = sheetNames.includes('CodeMonitor');
 
     if (!codeSheetExists) {
+      // Create CodeMonitor sheet with Code column (8 columns total)
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
         resource: {
@@ -2244,7 +2471,7 @@ async function recordCodeConfirmation(groupName, customerPhone, message = '', me
                 title: 'CodeMonitor',
                 gridProperties: {
                   rowCount: 1000,
-                  columnCount: 7
+                  columnCount: 8
                 }
               }
             }
@@ -2254,7 +2481,7 @@ async function recordCodeConfirmation(groupName, customerPhone, message = '', me
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-        range: 'CodeMonitor!A1:G1',
+        range: 'CodeMonitor!A1:H1',
         valueInputOption: 'RAW',
         resource: {
           values: [[
@@ -2264,17 +2491,77 @@ async function recordCodeConfirmation(groupName, customerPhone, message = '', me
             'Member',
             'Phone',
             'Message',
-            'Timezone'
+            'Timezone',
+            'Code'
           ]]
         }
       });
 
-      console.log('[CODE] Created CodeMonitor sheet with headers');
+      console.log('[CODE] Created CodeMonitor sheet with headers (including Code column)');
+    } else {
+      // Check if Code column exists, if not add it
+      try {
+        const headerResponse = await sheets.spreadsheets.values.get({
+          spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+          range: 'CodeMonitor!A1:H1'
+        });
+        
+        const headers = headerResponse.data.values?.[0] || [];
+        const hasCodeColumn = headers.some(h => h && h.toString().toLowerCase().trim() === 'code');
+        
+        if (!hasCodeColumn) {
+          // Code column doesn't exist, update headers to include it
+          // Find the index after Timezone (Code should be after Timezone)
+          const timezoneIndex = headers.findIndex(h => h && h.toString().toLowerCase().trim() === 'timezone');
+          const insertIndex = timezoneIndex !== -1 ? timezoneIndex + 1 : headers.length;
+          
+          // Update headers to include Code column after Timezone
+          const newHeaders = [...headers];
+          newHeaders.splice(insertIndex, 0, 'Code');
+          
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+            range: `CodeMonitor!A1:${String.fromCharCode(65 + newHeaders.length - 1)}1`,
+            valueInputOption: 'RAW',
+            resource: {
+              values: [newHeaders]
+            }
+          });
+          
+          console.log('[CODE] Added Code column to existing CodeMonitor sheet (after Timezone)');
+        } else {
+          // Code column exists, check if Timezone is before it
+          const codeIndex = headers.findIndex(h => h && h.toString().toLowerCase().trim() === 'code');
+          const timezoneIndex = headers.findIndex(h => h && h.toString().toLowerCase().trim() === 'timezone');
+          
+          if (timezoneIndex !== -1 && codeIndex !== -1 && timezoneIndex > codeIndex) {
+            // Timezone is after Code, need to reorder
+            const newHeaders = [...headers];
+            const timezone = newHeaders.splice(timezoneIndex, 1)[0];
+            // Insert Timezone before Code
+            newHeaders.splice(codeIndex, 0, timezone);
+            
+            await sheets.spreadsheets.values.update({
+              spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
+              range: `CodeMonitor!A1:${String.fromCharCode(65 + newHeaders.length - 1)}1`,
+              valueInputOption: 'RAW',
+              resource: {
+                values: [newHeaders]
+              }
+            });
+            
+            console.log('[CODE] Reordered columns: Timezone is now before Code');
+          }
+        }
+      } catch (error) {
+        console.warn('[CODE] Could not check/update CodeMonitor headers:', error.message);
+        // Continue anyway, will try to append with Code column
+      }
     }
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-      range: 'CodeMonitor!A:G',
+      range: 'CodeMonitor!A:H',
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       resource: {
@@ -3026,119 +3313,39 @@ async function updateAttendance(groupName, customerPhone, status = 'present', mo
       attendanceData[groupName][normalizedPhone] = {};
     }
 
-    // Use provided month or current month (YYYY-MM format)
-    const targetMonth = month || new Date().toISOString().slice(0, 7);
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const todayFormatted = new Date().toISOString().slice(8, 10); // DD (day only)
+    // Determine the date from message timestamp or use current date
+    let attendanceDate;
+    if (messageTimestamp) {
+      // Use message timestamp to get the date
+      const messageDate = new Date(messageTimestamp * 1000); // Convert Unix seconds to milliseconds
+      attendanceDate = messageDate.toISOString().slice(0, 10); // YYYY-MM-DD
+    } else {
+      // Fall back to current date if no timestamp
+      attendanceDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    }
+    
+    // Use provided month or determine from attendance date (YYYY-MM format)
+    const targetMonth = month || attendanceDate.slice(0, 7);
 
     // Initialize month array if not exists
     if (!attendanceData[groupName][normalizedPhone][targetMonth]) {
       attendanceData[groupName][normalizedPhone][targetMonth] = [];
     }
 
-    // Add today's date if not already present
-    if (!attendanceData[groupName][normalizedPhone][targetMonth].includes(today)) {
-      attendanceData[groupName][normalizedPhone][targetMonth].push(today);
-      console.log(`Attendance marked for ${customer.name} (${normalizedPhone}) on ${today} in month ${targetMonth}`);
+    // Add the attendance date if not already present
+    if (!attendanceData[groupName][normalizedPhone][targetMonth].includes(attendanceDate)) {
+      attendanceData[groupName][normalizedPhone][targetMonth].push(attendanceDate);
+      console.log(`Attendance marked for ${customer.name} (${normalizedPhone}) on ${attendanceDate} in month ${targetMonth}`);
       
-      // Update Google Sheet with attendance
+      // Write to Attendance sheet (Date, Time, Group, Member, Message)
+      // Use message timestamp if provided, otherwise use current time
       try {
-        // Get the sheet data to find the row for this customer
-        const response = await sheets.spreadsheets.values.get({
-          spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-          range: `${groupName}!A:Z`
-        });
-
-        const rows = response.data.values;
-        if (!rows || rows.length < 2) {
-          console.log('No data found in sheet');
-          return true; // Return true even if sheet update fails
-        }
-
-        const headers = rows[0];
-        const phoneCol = headers.findIndex(h => 
-          h && (h.toLowerCase().includes('phone') || 
-          h.toLowerCase().includes('number') ||
-          h.toLowerCase().includes('whatsapp'))
-        );
-
-        // Find the customer's row
-        let customerRow = -1;
-        for (let i = 1; i < rows.length; i++) {
-          const rowPhone = rows[i][phoneCol] ? rows[i][phoneCol].toString().replace(/\D/g, '') : '';
-          const cleanCustomerPhone = customerPhone.replace(/\D/g, '');
-          if (rowPhone === cleanCustomerPhone) {
-            customerRow = i + 1; // +1 because Google Sheets is 1-indexed
-            break;
-          }
-        }
-
-        if (customerRow === -1) {
-          console.log(`Customer not found in sheet: ${customer.name} (${customerPhone})`);
-          return true; // Return true even if customer not found
-        }
-
-        // Find or create the attendance column for today's date (DD format)
-        let dateCol = -1;
-        const dateColumnName = todayFormatted; // Column header is just the day (DD)
-        
-        // First, try to find existing date column
-        for (let i = 0; i < headers.length; i++) {
-          if (headers[i] && headers[i].toString().trim() === dateColumnName) {
-            dateCol = i;
-            break;
-          }
-        }
-
-        // Helper function to get column letter from index (supports AA, AB, etc.)
-        const getColumnLetter = (index) => {
-          let result = '';
-          let num = index;
-          while (num >= 0) {
-            result = String.fromCharCode(65 + (num % 26)) + result;
-            num = Math.floor(num / 26) - 1;
-          }
-          return result;
-        };
-
-        // If column doesn't exist, create it
-        if (dateCol === -1) {
-          // Find the last column
-          dateCol = headers.length;
-          // Add the new column header
-          await sheets.spreadsheets.values.update({
-            spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-            range: `${groupName}!${getColumnLetter(dateCol)}1`, // Column letter for the new column
-            valueInputOption: 'RAW',
-            resource: {
-              values: [[dateColumnName]]
-            }
-          });
-          console.log(`Created new attendance column: ${dateColumnName}`);
-        }
-
-        // Update the attendance cell with "P" (Present)
-        const columnLetter = getColumnLetter(dateCol);
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: GOOGLE_SHEETS_CONFIG.spreadsheetId,
-          range: `${groupName}!${columnLetter}${customerRow}`,
-          valueInputOption: 'RAW',
-          resource: {
-            values: [['P']]
-          }
-        });
-
-        console.log(`Updated Google Sheet: ${groupName}!${columnLetter}${customerRow} = P`);
-        console.log(`Attendance written to Google Sheets for ${customer.name}`);
-
-        // Write to Attendance sheet (Date, Time, Group, Member, Message)
-        // Use message timestamp if provided, otherwise use current time
         await writeAttendanceToSheet(groupName, customer.name, customer.phone, message, messageTimestamp);
-
+        console.log(`Attendance written to Attendance sheet for ${customer.name}`);
       } catch (sheetError) {
-        console.error('Error updating Google Sheet:', sheetError);
+        console.error('Error writing to Attendance sheet:', sheetError);
         // Don't fail the request if sheet update fails
-        console.log('Continuing despite sheet update error...');
+        console.log('Continuing despite Attendance sheet write error...');
       }
     }
 
