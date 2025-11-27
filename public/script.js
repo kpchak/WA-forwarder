@@ -1226,23 +1226,34 @@ function loadMergedMessages() {
             allMessages = data.messages;
             
             // Debug: Log sample messages to see isFromMe values
-            console.log('[DEBUG] Sample messages from API:', data.messages.slice(0, 3).map(m => ({
+            console.log('[CLIENT] Received messages from server:', data.messages.length);
+            console.log('[CLIENT] Sample messages from API:', data.messages.slice(0, 3).map(m => ({
                 id: m.id,
                 body: m.body?.substring(0, 30),
                 isFromMe: m.isFromMe,
+                isFromMeType: typeof m.isFromMe,
                 senderName: m.senderName,
-                senderPhone: m.senderPhone
+                senderPhone: m.senderPhone,
+                timestamp: m.timestamp
             })));
             
             // Count messages with isFromMe
             const fromMeInData = data.messages.filter(m => m.isFromMe === true || m.isFromMe === 'true').length;
-            console.log(`[DEBUG] Messages with isFromMe=true in API response: ${fromMeInData} out of ${data.messages.length}`);
+            const customerMessages = data.messages.filter(m => !m.isFromMe && m.isFromMe !== 'true').length;
+            console.log(`[CLIENT] Messages breakdown: ${fromMeInData} from You, ${customerMessages} from customers, total: ${data.messages.length}`);
+            console.log(`[CLIENT] Current filter state:`, {
+                timeFilter: timeFilter.enabled,
+                customerFilter: customerFilterEnabled,
+                hoursFilter: hoursFilterEnabled,
+                textFilter: textFilterEnabled
+            });
             
             displayMessages(data.messages);
             populateCustomerSelector(); // Populate dropdown with senders from loaded messages
             
-            console.log(`Loaded ${data.totalMessages} unique messages from ${data.phoneNumbers ? data.phoneNumbers.length : 0} phone numbers`);
+            console.log(`[CLIENT] Loaded ${data.totalMessages} unique messages from ${data.phoneNumbers ? data.phoneNumbers.length : 0} phone numbers`);
         } else {
+            console.warn('[CLIENT] No messages returned from server');
             messagesContainer.innerHTML = '<div class="no-messages">No messages found for the selected phone numbers.</div>';
             allMessages = []; // Reset messages array
             populateCustomerSelector(); // Update dropdown
@@ -1283,32 +1294,17 @@ function displayMessages(messages) {
     
     let displayedCount = 0;
     
-    // Check if server has already applied time filter
-    // If timeFilter is enabled, the server has already filtered messages by date
-    // So we should display all messages returned from server (they're already filtered)
-    // Only apply client-side time filter if server didn't filter (when timeFilter is not enabled)
-    if (timeFilter.enabled && timeFilter.fromDate && timeFilter.toDate) {
-        console.log('Time filter enabled - server has already filtered messages by date range');
-        console.log('Time filter range:', timeFilter.fromDate.toISOString(), 'to', timeFilter.toDate.toISOString());
-        console.log('Time filter local:', timeFilter.fromDate.toLocaleString(), 'to', timeFilter.toDate.toLocaleString());
-        console.log('Displaying all', messages.length, 'messages returned from server (already filtered by server)');
-        
-        // Server has already filtered, so display all returned messages
-        // No need to filter again on client side to avoid timezone mismatch issues
-        messages.forEach(message => {
-            addMessageToContainer(message);
-            displayedCount++;
-        });
-    } else {
-        console.log('No time filter applied, showing all messages');
-        // Show all messages if no time filter is applied
-        messages.forEach(message => {
-            addMessageToContainer(message);
-            displayedCount++;
-        });
-    }
+    // Server handles all time filtering - just display all messages returned
+    // Time filtering is done on server side to avoid timezone issues
+    console.log('[CLIENT] Displaying all', messages.length, 'messages returned from server (server has already applied time filter if enabled)');
     
-    console.log('Displayed', displayedCount, 'messages out of', messages.length, 'total');
+    messages.forEach(message => {
+        addMessageToContainer(message);
+        displayedCount++;
+    });
+    
+    console.log('[CLIENT] Displayed', displayedCount, 'messages out of', messages.length, 'total');
+    console.log('[CLIENT] Messages container now has', messagesContainer.children.length, 'child elements');
     
     // Update toggle button state on initial load
     if (toggleCustomerMessagesBtn && toggleCustomerMessagesText) {
@@ -1338,7 +1334,19 @@ function displayMessages(messages) {
         
         // Apply all active filters after messages are displayed
         // Customer filter is enabled by default, so always apply filters
+        console.log('[CLIENT] About to apply filters. Current state:', {
+            timeFilter: timeFilter.enabled,
+            customerFilter: customerFilterEnabled,
+            hoursFilter: hoursFilterEnabled,
+            textFilter: textFilterEnabled,
+            messageCount: messagesContainer.querySelectorAll('.message').length
+        });
         applyAllActiveFilters();
+        const visibleAfterFilter = messagesContainer.querySelectorAll('.message:not([style*="display: none"])').length;
+        console.log('[CLIENT] After applying filters, visible messages:', visibleAfterFilter);
+        if (visibleAfterFilter === 0 && messagesContainer.querySelectorAll('.message').length > 0) {
+            console.warn('[CLIENT] ⚠️ WARNING: All messages are hidden after applying filters!');
+        }
     }, 200);
 }
 
@@ -3862,9 +3870,7 @@ function filterMessagesByCustomer() {
             messageElement.style.display = 'block';
         });
         // Then apply other active filters (but not customer filter)
-        if (timeFilter.enabled) {
-            filterMessagesByTime();
-        }
+        // Note: Time filter is handled on server side, so skip it here
         if (hoursFilterEnabled) {
             filterMessagesByHours();
         }
@@ -3910,8 +3916,9 @@ function filterMessagesByCustomer() {
             // But check if they should be visible based on other filters
             // If they were hidden by other filters, keep them hidden
             // Otherwise, show them
+            // Note: Time filter is handled on server side, so don't check timeFilter.enabled here
             const wasHiddenByOtherFilter = currentDisplay === 'none' && 
-                                          (timeFilter.enabled || hoursFilterEnabled || textFilterEnabled);
+                                          (hoursFilterEnabled || textFilterEnabled);
             if (wasHiddenByOtherFilter) {
                 alreadyHiddenCount++;
             } else {
@@ -3929,6 +3936,7 @@ function filterMessagesByCustomer() {
 }
 
 // Apply all active filters in sequence
+// Note: Time filter is handled on server side only - no client-side time filtering
 function applyAllActiveFilters() {
     const messageElements = messagesContainer.querySelectorAll('.message');
     
@@ -3937,10 +3945,7 @@ function applyAllActiveFilters() {
         messageElement.style.display = 'block';
     });
     
-    // Apply time filter if enabled
-    if (timeFilter.enabled) {
-        filterMessagesByTime();
-    }
+    // Time filter is handled on server side - skip client-side time filtering
     
     // Apply hours filter if enabled
     if (hoursFilterEnabled) {
@@ -5138,8 +5143,9 @@ function applyTimeFilterToMessages() {
     } else if (currentPhoneNumber) {
         loadMessages(currentPhoneNumber);
     } else {
-        // If no messages loaded, just filter existing ones
-    filterMessagesByTime();
+        // If no messages loaded, time filter is handled on server side
+        // No client-side filtering needed
+        console.log('[CLIENT] No messages loaded - time filter will be applied on next server request');
     }
     
     showNotification(`Filtering messages from ${fromDateTime.toLocaleString()} to ${toDateTime.toLocaleString()}`, 'success');
