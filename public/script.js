@@ -4840,7 +4840,9 @@ function applyTimePreset(preset) {
             fromDateTime.setHours(0, 0, 0, 0);
             toDateTime = new Date(now);
             toDateTime.setHours(23, 59, 59, 999);
-            console.log('Today preset - fromDateTime:', fromDateTime, 'toDateTime:', toDateTime);
+            console.log('Today preset - fromDateTime:', fromDateTime.toISOString(), 'toDateTime:', toDateTime.toISOString());
+            console.log('Today preset - Local:', fromDateTime.toLocaleString(), 'to', toDateTime.toLocaleString());
+            console.log('Today preset - Current now:', now.toISOString(), 'Local:', now.toLocaleString());
             break;
             
         case 'yesterday':
@@ -4911,14 +4913,45 @@ function applyTimePreset(preset) {
     }
     
     // Update form fields - use local date formatting to avoid timezone issues
-    const fromDateStr = fromDateTime.getFullYear() + '-' + 
-                    String(fromDateTime.getMonth() + 1).padStart(2, '0') + '-' + 
-                    String(fromDateTime.getDate()).padStart(2, '0');
-    const toDateStr = toDateTime.getFullYear() + '-' + 
-                  String(toDateTime.getMonth() + 1).padStart(2, '0') + '-' + 
-                  String(toDateTime.getDate()).padStart(2, '0');
+    // Use getFullYear(), getMonth(), getDate() which return local timezone values
+    const fromYear = fromDateTime.getFullYear();
+    const fromMonth = fromDateTime.getMonth() + 1; // getMonth() returns 0-11
+    const fromDay = fromDateTime.getDate();
+    
+    const toYear = toDateTime.getFullYear();
+    const toMonth = toDateTime.getMonth() + 1;
+    const toDay = toDateTime.getDate();
+    
+    const fromDateStr = fromYear + '-' + 
+                    String(fromMonth).padStart(2, '0') + '-' + 
+                    String(fromDay).padStart(2, '0');
+    const toDateStr = toYear + '-' + 
+                  String(toMonth).padStart(2, '0') + '-' + 
+                  String(toDay).padStart(2, '0');
     
     console.log('Date formatting - fromDateStr:', fromDateStr, 'toDateStr:', toDateStr);
+    console.log('Date objects before formatting:', {
+        from: fromDateTime.toISOString(),
+        to: toDateTime.toISOString(),
+        fromLocal: fromDateTime.toLocaleString(),
+        toLocal: toDateTime.toLocaleString(),
+        fromComponents: { year: fromYear, month: fromMonth, day: fromDay },
+        toComponents: { year: toYear, month: toMonth, day: toDay },
+        currentDate: new Date().toLocaleDateString(),
+        currentTime: new Date().toLocaleTimeString()
+    });
+    
+    // Validate that dates are reasonable (not in the future, not too far in the past)
+    const currentDate = new Date();
+    const maxFutureDays = 1; // Allow 1 day in future for timezone edge cases
+    const maxPastDays = 365; // Don't allow dates more than 1 year in past
+    
+    if (fromDateTime > currentDate.getTime() + (maxFutureDays * 24 * 60 * 60 * 1000)) {
+        console.warn('⚠️ Warning: Filter start date is more than', maxFutureDays, 'day(s) in the future:', fromDateStr);
+    }
+    if (fromDateTime < currentDate.getTime() - (maxPastDays * 24 * 60 * 60 * 1000)) {
+        console.warn('⚠️ Warning: Filter start date is more than', maxPastDays, 'days in the past:', fromDateStr);
+    }
     
     fromDate.value = fromDateStr;
     toDate.value = toDateStr;
@@ -5053,13 +5086,23 @@ function applyTimeFilterToMessages() {
                                 Math.floor(toTimeValue / 60), toTimeValue % 60, 59, 999);
     
     // Debug logging for timezone troubleshooting
-    console.log('Time filter applied:', {
+    console.log('Time filter applied - Input values:', {
+        fromDateValue: fromDateValue,
+        toDateValue: toDateValue,
+        fromTimeValue: fromTimeValue,
+        toTimeValue: toTimeValue,
+        parsedFrom: { year: fromYear, month: fromMonth, day: fromDay },
+        parsedTo: { year: toYear, month: toMonth, day: toDay }
+    });
+    console.log('Time filter applied - Created dates:', {
         from: fromDateTime.toISOString(),
         to: toDateTime.toISOString(),
         fromLocal: fromDateTime.toLocaleString(),
         toLocal: toDateTime.toLocaleString(),
         fromTimestamp: fromDateTime.getTime(),
-        toTimestamp: toDateTime.getTime()
+        toTimestamp: toDateTime.getTime(),
+        currentTime: new Date().toISOString(),
+        currentTimeLocal: new Date().toLocaleString()
     });
     
     // Store filter settings
