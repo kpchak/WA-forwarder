@@ -1283,42 +1283,22 @@ function displayMessages(messages) {
     
     let displayedCount = 0;
     
-    // Apply time filter if enabled, otherwise show all messages
+    // Check if server has already applied time filter
+    // If timeFilter is enabled, the server has already filtered messages by date
+    // So we should display all messages returned from server (they're already filtered)
+    // Only apply client-side time filter if server didn't filter (when timeFilter is not enabled)
     if (timeFilter.enabled && timeFilter.fromDate && timeFilter.toDate) {
-        console.log('Applying time filter from', timeFilter.fromDate.toISOString(), 'to', timeFilter.toDate.toISOString());
+        console.log('Time filter enabled - server has already filtered messages by date range');
+        console.log('Time filter range:', timeFilter.fromDate.toISOString(), 'to', timeFilter.toDate.toISOString());
         console.log('Time filter local:', timeFilter.fromDate.toLocaleString(), 'to', timeFilter.toDate.toLocaleString());
+        console.log('Displaying all', messages.length, 'messages returned from server (already filtered by server)');
         
-        let timeFilteredCount = 0;
-        let timeFilteredOutCount = 0;
-        
-        // Apply custom time filter
+        // Server has already filtered, so display all returned messages
+        // No need to filter again on client side to avoid timezone mismatch issues
         messages.forEach(message => {
-            const messageDate = new Date(message.timestamp * 1000);
-            const isInRange = messageDate >= timeFilter.fromDate && messageDate <= timeFilter.toDate;
-            
-            // Debug first few messages
-            if (timeFilteredCount < 3 || timeFilteredOutCount < 3) {
-                console.log('Message time check:', {
-                    messageTimestamp: message.timestamp,
-                    messageDate: messageDate.toISOString(),
-                    messageDateLocal: messageDate.toLocaleString(),
-                    filterFrom: timeFilter.fromDate.toISOString(),
-                    filterTo: timeFilter.toDate.toISOString(),
-                    isInRange: isInRange,
-                    isFromMe: message.isFromMe
-                });
-            }
-            
-            if (isInRange) {
-                addMessageToContainer(message);
-                displayedCount++;
-                timeFilteredCount++;
-            } else {
-                timeFilteredOutCount++;
-            }
+            addMessageToContainer(message);
+            displayedCount++;
         });
-        
-        console.log(`Time filter: ${timeFilteredCount} messages passed, ${timeFilteredOutCount} filtered out`);
     } else {
         console.log('No time filter applied, showing all messages');
         // Show all messages if no time filter is applied
