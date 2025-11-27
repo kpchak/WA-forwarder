@@ -1285,15 +1285,40 @@ function displayMessages(messages) {
     
     // Apply time filter if enabled, otherwise show all messages
     if (timeFilter.enabled && timeFilter.fromDate && timeFilter.toDate) {
-        console.log('Applying time filter from', timeFilter.fromDate, 'to', timeFilter.toDate);
+        console.log('Applying time filter from', timeFilter.fromDate.toISOString(), 'to', timeFilter.toDate.toISOString());
+        console.log('Time filter local:', timeFilter.fromDate.toLocaleString(), 'to', timeFilter.toDate.toLocaleString());
+        
+        let timeFilteredCount = 0;
+        let timeFilteredOutCount = 0;
+        
         // Apply custom time filter
         messages.forEach(message => {
             const messageDate = new Date(message.timestamp * 1000);
-            if (messageDate >= timeFilter.fromDate && messageDate <= timeFilter.toDate) {
+            const isInRange = messageDate >= timeFilter.fromDate && messageDate <= timeFilter.toDate;
+            
+            // Debug first few messages
+            if (timeFilteredCount < 3 || timeFilteredOutCount < 3) {
+                console.log('Message time check:', {
+                    messageTimestamp: message.timestamp,
+                    messageDate: messageDate.toISOString(),
+                    messageDateLocal: messageDate.toLocaleString(),
+                    filterFrom: timeFilter.fromDate.toISOString(),
+                    filterTo: timeFilter.toDate.toISOString(),
+                    isInRange: isInRange,
+                    isFromMe: message.isFromMe
+                });
+            }
+            
+            if (isInRange) {
                 addMessageToContainer(message);
                 displayedCount++;
+                timeFilteredCount++;
+            } else {
+                timeFilteredOutCount++;
             }
         });
+        
+        console.log(`Time filter: ${timeFilteredCount} messages passed, ${timeFilteredOutCount} filtered out`);
     } else {
         console.log('No time filter applied, showing all messages');
         // Show all messages if no time filter is applied
@@ -3880,10 +3905,19 @@ function filterMessagesByCustomer() {
     const messageElements = messagesContainer.querySelectorAll('.message');
     let visibleCount = 0;
     let hiddenCount = 0;
+    let alreadyHiddenCount = 0;
     
-    messageElements.forEach(messageElement => {
+    console.log(`Applying customer filter to ${messageElements.length} message elements`);
+    
+    messageElements.forEach((messageElement, index) => {
         // Get isFromMe from data attribute
         const isFromMe = messageElement.getAttribute('data-is-from-me') === 'true';
+        const currentDisplay = messageElement.style.display;
+        
+        // Debug first few messages
+        if (index < 5) {
+            console.log(`Message ${index}: isFromMe=${isFromMe}, currentDisplay=${currentDisplay}`);
+        }
         
         // Process ALL messages, not just visible ones
         // This ensures messages hidden by previous filter states are properly handled
@@ -3896,16 +3930,21 @@ function filterMessagesByCustomer() {
             // But check if they should be visible based on other filters
             // If they were hidden by other filters, keep them hidden
             // Otherwise, show them
-            const wasHiddenByOtherFilter = messageElement.style.display === 'none' && 
+            const wasHiddenByOtherFilter = currentDisplay === 'none' && 
                                           (timeFilter.enabled || hoursFilterEnabled || textFilterEnabled);
-            if (!wasHiddenByOtherFilter) {
+            if (wasHiddenByOtherFilter) {
+                alreadyHiddenCount++;
+            } else {
                 messageElement.style.display = 'block';
                 visibleCount++;
             }
         }
     });
     
-    console.log(`Customer filter enabled - showing ${visibleCount} customer messages, hiding ${hiddenCount} from You`);
+    console.log(`Customer filter result - showing ${visibleCount} customer messages, hiding ${hiddenCount} from You, ${alreadyHiddenCount} already hidden by other filters`);
+    if (visibleCount === 0 && messageElements.length > 0) {
+        console.warn('⚠️ No messages visible after customer filter! Check if all messages are from "You" or hidden by other filters.');
+    }
     showNotification(`Showing ${visibleCount} customer messages (${hiddenCount} hidden)`, 'info');
 }
 
