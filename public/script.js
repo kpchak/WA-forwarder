@@ -438,10 +438,6 @@ document.addEventListener('DOMContentLoaded', function() {
     setupEventListeners();
     console.log('🔧 Event listeners set up, checking socket connection...');
     
-    // Validate and fix invalid filters on page load (prevents mobile filter issues)
-    console.log('🔧 Validating filters on page load...');
-    validateAndFixFilters();
-    
     // Auto-load customer groups when app starts (with small delay to ensure socket is ready)
     console.log('🔧 Auto-loading customer groups...');
     setTimeout(() => {
@@ -1166,36 +1162,23 @@ function loadMergedMessages() {
     
     console.log('Loading merged messages for:', currentPhoneNumbers);
     console.log('Time filter enabled:', timeFilter.enabled, 'Hours filter enabled:', hoursFilterEnabled, 'Value:', hoursFilterValue);
-    console.log('Time filter dates:', { fromDate: timeFilter.fromDate, toDate: timeFilter.toDate });
-    console.log('Customer filter enabled:', customerFilterEnabled);
-    console.log('Text filter enabled:', textFilterEnabled);
-    
-    // Validate time filter dates if enabled - prevent invalid filters from blocking all messages
-    if (timeFilter.enabled) {
-        if (!timeFilter.fromDate || !timeFilter.toDate || isNaN(timeFilter.fromDate.getTime()) || isNaN(timeFilter.toDate.getTime())) {
-            console.warn('⚠️ Time filter enabled but dates are invalid. Disabling time filter to prevent 0 messages.');
-            timeFilter.enabled = false;
-            timeFilter.fromDate = null;
-            timeFilter.toDate = null;
-        } else if (timeFilter.fromDate > timeFilter.toDate) {
-            console.warn('⚠️ Time filter fromDate is after toDate. Disabling time filter to prevent 0 messages.');
-            timeFilter.enabled = false;
-            timeFilter.fromDate = null;
-            timeFilter.toDate = null;
-        }
-    }
     
     // Build query parameters based on active filters
     let queryParams = new URLSearchParams();
     if (hoursFilterEnabled && hoursFilterValue > 0) {
         queryParams.append('hours', hoursFilterValue);
         console.log('Sending hours filter:', hoursFilterValue);
-    } else if (timeFilter.enabled && timeFilter.fromDate && timeFilter.toDate) {
+    } else if (timeFilter.enabled) {
         queryParams.append('datetimeFilter', 'true');
         // Send actual from/to timestamps for precise filtering
-        queryParams.append('from', timeFilter.fromDate.getTime());
-        queryParams.append('to', timeFilter.toDate.getTime());
-        console.log('Sending datetime filter, from:', new Date(timeFilter.fromDate).toLocaleString(), 'to:', new Date(timeFilter.toDate).toLocaleString());
+        if (timeFilter.fromDate && timeFilter.toDate) {
+            queryParams.append('from', timeFilter.fromDate.getTime());
+            queryParams.append('to', timeFilter.toDate.getTime());
+            console.log('Sending datetime filter, from:', new Date(timeFilter.fromDate).toLocaleString(), 'to:', new Date(timeFilter.toDate).toLocaleString());
+        } else {
+            queryParams.append('days', 1); // Default to today
+            console.log('Sending datetime filter, default days: 1');
+        }
     }
     
     const queryString = queryParams.toString();
@@ -1248,26 +1231,18 @@ function loadMergedMessages() {
                 body: m.body?.substring(0, 30),
                 isFromMe: m.isFromMe,
                 senderName: m.senderName,
-                senderPhone: m.senderPhone,
-                timestamp: m.timestamp ? new Date(m.timestamp * 1000).toLocaleString() : 'N/A'
+                senderPhone: m.senderPhone
             })));
             
             // Count messages with isFromMe
             const fromMeInData = data.messages.filter(m => m.isFromMe === true || m.isFromMe === 'true').length;
             console.log(`[DEBUG] Messages with isFromMe=true in API response: ${fromMeInData} out of ${data.messages.length}`);
-            console.log(`[DEBUG] Active filters before display: timeFilter=${timeFilter.enabled}, hoursFilter=${hoursFilterEnabled}, customerFilter=${customerFilterEnabled}, textFilter=${textFilterEnabled}`);
             
             displayMessages(data.messages);
             populateCustomerSelector(); // Populate dropdown with senders from loaded messages
             
             console.log(`Loaded ${data.totalMessages} unique messages from ${data.phoneNumbers ? data.phoneNumbers.length : 0} phone numbers`);
         } else {
-            console.warn('⚠️ No messages returned from server. Check filters:', {
-                timeFilter: timeFilter.enabled,
-                hoursFilter: hoursFilterEnabled,
-                hoursValue: hoursFilterValue,
-                phoneNumbers: currentPhoneNumbers.length
-            });
             messagesContainer.innerHTML = '<div class="no-messages">No messages found for the selected phone numbers.</div>';
             allMessages = []; // Reset messages array
             populateCustomerSelector(); // Update dropdown
@@ -1310,24 +1285,15 @@ function displayMessages(messages) {
     
     // Apply time filter if enabled, otherwise show all messages
     if (timeFilter.enabled && timeFilter.fromDate && timeFilter.toDate) {
-        // Validate dates before applying filter
-        if (isNaN(timeFilter.fromDate.getTime()) || isNaN(timeFilter.toDate.getTime())) {
-            console.warn('⚠️ Invalid time filter dates detected. Showing all messages instead.');
-            messages.forEach(message => {
+        console.log('Applying time filter from', timeFilter.fromDate, 'to', timeFilter.toDate);
+        // Apply custom time filter
+        messages.forEach(message => {
+            const messageDate = new Date(message.timestamp * 1000);
+            if (messageDate >= timeFilter.fromDate && messageDate <= timeFilter.toDate) {
                 addMessageToContainer(message);
                 displayedCount++;
-            });
-        } else {
-            console.log('Applying time filter from', timeFilter.fromDate.toLocaleString(), 'to', timeFilter.toDate.toLocaleString());
-            // Apply custom time filter
-            messages.forEach(message => {
-                const messageDate = new Date(message.timestamp * 1000);
-                if (messageDate >= timeFilter.fromDate && messageDate <= timeFilter.toDate) {
-                    addMessageToContainer(message);
-                    displayedCount++;
-                }
-            });
-        }
+            }
+        });
     } else {
         console.log('No time filter applied, showing all messages');
         // Show all messages if no time filter is applied
@@ -3975,11 +3941,6 @@ function applyAllActiveFilters() {
 
 // Initialize time filter with current date
 function initializeTimeFilter() {
-    if (!fromDate || !toDate || !fromTimeSlider || !toTimeSlider) {
-        console.warn('Time filter elements not found, skipping initialization');
-        return;
-    }
-    
     const today = new Date();
     const todayStr = today.getFullYear() + '-' + 
                     String(today.getMonth() + 1).padStart(2, '0') + '-' + 
@@ -3998,104 +3959,6 @@ function initializeTimeFilter() {
     
     // Make sure time filter is disabled by default
     timeFilter.enabled = false;
-    timeFilter.fromDate = null;
-    timeFilter.toDate = null;
-}
-
-// Validate and fix invalid filters (only fixes broken filters, preserves valid ones)
-function validateAndFixFilters() {
-    console.log('Validating filters...');
-    let fixed = false;
-    
-    // Validate time filter
-    if (timeFilter.enabled) {
-        if (!timeFilter.fromDate || !timeFilter.toDate || 
-            isNaN(timeFilter.fromDate.getTime()) || isNaN(timeFilter.toDate.getTime()) ||
-            timeFilter.fromDate > timeFilter.toDate) {
-            console.warn('⚠️ Invalid time filter detected, disabling it');
-            timeFilter.enabled = false;
-            timeFilter.fromDate = null;
-            timeFilter.toDate = null;
-            fixed = true;
-        }
-    }
-    
-    // Validate hours filter
-    if (hoursFilterEnabled && (hoursFilterValue <= 0 || hoursFilterValue > 168)) {
-        console.warn('⚠️ Invalid hours filter value detected, disabling it');
-        hoursFilterEnabled = false;
-        hoursFilterValue = 0;
-        if (hoursFilter) {
-            hoursFilter.value = '';
-        }
-        fixed = true;
-    }
-    
-    if (fixed) {
-        console.log('Fixed invalid filters. Current state:', {
-            timeFilter: timeFilter.enabled,
-            hoursFilter: hoursFilterEnabled,
-            textFilter: textFilterEnabled,
-            customerFilter: customerFilterEnabled
-        });
-    } else {
-        console.log('All filters are valid');
-    }
-}
-
-// Reset all filters to default state
-function resetAllFilters() {
-    console.log('Resetting all filters to default state...');
-    
-    // Reset time filter
-    timeFilter.enabled = false;
-    timeFilter.fromDate = null;
-    timeFilter.toDate = null;
-    
-    // Reset hours filter
-    hoursFilterEnabled = false;
-    hoursFilterValue = 0;
-    if (hoursFilter) {
-        hoursFilter.value = '';
-    }
-    
-    // Reset text filter
-    textFilterEnabled = false;
-    textFilterPattern = '';
-    textFilterDisplayValue = '';
-    if (textFilterInput) {
-        textFilterInput.value = '';
-    }
-    
-    // Reset customer selector filter
-    selectedCustomerPhone = null;
-    const customerSelector = document.getElementById('customerSelector');
-    if (customerSelector) {
-        customerSelector.value = '';
-    }
-    
-    // Customer filter stays enabled by default (showing only customer messages)
-    // customerFilterEnabled = true; // Keep default behavior
-    
-    // Clear active preset buttons
-    if (presetButtons) {
-        presetButtons.forEach(btn => btn.classList.remove('active'));
-    }
-    
-    // Hide time range summary
-    if (timeRangeSummary) {
-        timeRangeSummary.style.display = 'none';
-    }
-    
-    // Reinitialize time filter UI
-    initializeTimeFilter();
-    
-    console.log('All filters reset. Current state:', {
-        timeFilter: timeFilter.enabled,
-        hoursFilter: hoursFilterEnabled,
-        textFilter: textFilterEnabled,
-        customerFilter: customerFilterEnabled
-    });
 }
 
 // Update time display for from slider
@@ -5179,12 +5042,25 @@ function applyTimeFilterToMessages() {
     const fromTimeValue = parseInt(fromTimeSlider.value);
     const toTimeValue = parseInt(toTimeSlider.value);
     
-    // Create date objects
-    const fromDateTime = new Date(fromDateValue);
-    fromDateTime.setHours(Math.floor(fromTimeValue / 60), fromTimeValue % 60, 0, 0);
+    // Create date objects in LOCAL timezone (not UTC)
+    // Parse date string and create date in local timezone to avoid timezone offset issues
+    const [fromYear, fromMonth, fromDay] = fromDateValue.split('-').map(Number);
+    const fromDateTime = new Date(fromYear, fromMonth - 1, fromDay, 
+                                  Math.floor(fromTimeValue / 60), fromTimeValue % 60, 0, 0);
     
-    const toDateTime = new Date(toDateValue);
-    toDateTime.setHours(Math.floor(toTimeValue / 60), toTimeValue % 60, 59, 999);
+    const [toYear, toMonth, toDay] = toDateValue.split('-').map(Number);
+    const toDateTime = new Date(toYear, toMonth - 1, toDay,
+                                Math.floor(toTimeValue / 60), toTimeValue % 60, 59, 999);
+    
+    // Debug logging for timezone troubleshooting
+    console.log('Time filter applied:', {
+        from: fromDateTime.toISOString(),
+        to: toDateTime.toISOString(),
+        fromLocal: fromDateTime.toLocaleString(),
+        toLocal: toDateTime.toLocaleString(),
+        fromTimestamp: fromDateTime.getTime(),
+        toTimestamp: toDateTime.getTime()
+    });
     
     // Store filter settings
     timeFilter.enabled = true;
