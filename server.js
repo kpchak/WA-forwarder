@@ -2918,6 +2918,30 @@ function validateSchedulePayload(group, payload = {}, existingSchedule = null, o
   };
 }
 
+// Function to replace placeholders in message text
+function replaceMessagePlaceholders(message, customer, sendDate = new Date()) {
+  if (!message || typeof message !== 'string') {
+    return message;
+  }
+  
+  let replacedMessage = message;
+  
+  // Replace <day of the week>
+  const dayOfWeek = sendDate.toLocaleDateString('en-US', { weekday: 'long' });
+  replacedMessage = replacedMessage.replace(/<day of the week>/gi, dayOfWeek);
+  
+  // Replace <date of month>
+  const dateOfMonth = sendDate.getDate().toString();
+  replacedMessage = replacedMessage.replace(/<date of month>/gi, dateOfMonth);
+  
+  // Replace <customer name>
+  if (customer && customer.name) {
+    replacedMessage = replacedMessage.replace(/<customer name>/gi, customer.name);
+  }
+  
+  return replacedMessage;
+}
+
 async function sendGroupMessageInternal(groupName, options = {}) {
   try {
     const {
@@ -2987,6 +3011,11 @@ async function sendGroupMessageInternal(groupName, options = {}) {
         console.log(`Getting chat for ID: ${chatId}, isGroup: ${customer.phone.includes('@g.us')}`);
         const chat = await client.getChatById(chatId);
 
+        // Replace placeholders in message for this customer
+        const sendDate = new Date();
+        const personalizedMessage = message ? replaceMessagePlaceholders(message, customer, sendDate) : message;
+        const personalizedMediaCaption = message ? replaceMessagePlaceholders(message, customer, sendDate) : message;
+
         if (hasMedia && mediaUrl && mediaType) {
           console.log(`Sending media to ${customer.phone}:`, {
             mediaType,
@@ -3010,20 +3039,20 @@ async function sendGroupMessageInternal(groupName, options = {}) {
 
             try {
               const mediaMessage = new MessageMedia(mediaType, base64Data);
-              await chat.sendMessage(mediaMessage, { caption: message });
+              await chat.sendMessage(mediaMessage, { caption: personalizedMediaCaption });
             } catch (error) {
               console.error('Error sending media message:', error);
-              await chat.sendMessage(message || '');
+              await chat.sendMessage(personalizedMessage || '');
             } finally {
               if (fs.existsSync(tempFilePath)) {
                 fs.unlinkSync(tempFilePath);
               }
             }
           } else {
-            await chat.sendMessage(mediaUrl, { caption: message });
+            await chat.sendMessage(mediaUrl, { caption: personalizedMediaCaption });
           }
-        } else if (message) {
-          await chat.sendMessage(message);
+        } else if (personalizedMessage) {
+          await chat.sendMessage(personalizedMessage);
         } else if (mediaUrl) {
           await chat.sendMessage(mediaUrl);
         }

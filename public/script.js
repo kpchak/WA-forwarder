@@ -2997,6 +2997,20 @@ function previewGroupMessage() {
         return;
     }
     
+    // Replace placeholders for preview (using example values)
+    const now = new Date();
+    const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const dateOfMonth = now.getDate().toString();
+    const exampleCustomerName = 'John Doe'; // Example name for preview
+    
+    let previewMessage = message || 'No text message';
+    if (message) {
+        previewMessage = message
+            .replace(/<day of the week>/gi, dayOfWeek)
+            .replace(/<date of month>/gi, dateOfMonth)
+            .replace(/<customer name>/gi, exampleCustomerName);
+    }
+    
     const preview = document.createElement('div');
     preview.className = 'modal-overlay';
     preview.innerHTML = `
@@ -3008,7 +3022,11 @@ function previewGroupMessage() {
             <div class="modal-body">
                 <div class="message-preview">
                     ${mediaUrl ? `<img src="${mediaUrl}" style="max-width: 100%; height: auto; margin-bottom: 10px;" alt="Media preview">` : ''}
-                    <div class="message-text">${message || 'No text message'}</div>
+                    <div class="message-text" style="white-space: pre-wrap;">${previewMessage}</div>
+                    ${message && (message.includes('<day of the week>') || message.includes('<date of month>') || message.includes('<customer name>')) ? 
+                        `<div style="margin-top: 15px; padding: 10px; background: #e7f3ff; border-radius: 5px; font-size: 0.85rem; color: #666;">
+                            <i class="fas fa-info-circle"></i> <strong>Note:</strong> Placeholders shown with example values. Actual values will be used when sending to each customer.
+                        </div>` : ''}
                 </div>
             </div>
         </div>
