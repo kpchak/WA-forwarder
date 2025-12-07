@@ -101,6 +101,8 @@ let textFilterPattern = '';
 let textFilterDisplayValue = '';
 let selectedCustomerPhone = null;
 let allMessages = []; // Global array to store all loaded messages
+const MAX_MESSAGES_IN_MEMORY = 1000; // Limit to prevent memory leaks
+const MAX_MESSAGE_STORE_SIZE = 500; // Limit messageStore size
 let qrCodeData = null;
 let timeFilter = {
     enabled: false,
@@ -127,6 +129,41 @@ let messageStore = {};
 
 // Store for attached media files for forwarding
 let attachedMedia = {};
+
+// Function to cleanup old messages from memory
+function cleanupOldMessages() {
+    // Limit allMessages array
+    if (allMessages.length > MAX_MESSAGES_IN_MEMORY) {
+        const removed = allMessages.length - MAX_MESSAGES_IN_MEMORY;
+        allMessages = allMessages.slice(0, MAX_MESSAGES_IN_MEMORY);
+        console.log(`🧹 Cleaned up ${removed} old messages from allMessages array`);
+    }
+    
+    // Limit messageStore
+    const storeKeys = Object.keys(messageStore);
+    if (storeKeys.length > MAX_MESSAGE_STORE_SIZE) {
+        const sortedKeys = storeKeys.sort((a, b) => {
+            const msgA = messageStore[a];
+            const msgB = messageStore[b];
+            return (msgB?.timestamp || 0) - (msgA?.timestamp || 0);
+        });
+        
+        const keysToRemove = sortedKeys.slice(MAX_MESSAGE_STORE_SIZE);
+        keysToRemove.forEach(key => delete messageStore[key]);
+        console.log(`🧹 Cleaned up ${keysToRemove.length} old messages from messageStore`);
+    }
+    
+    // Clean up old media attachments (keep only last 50)
+    const mediaKeys = Object.keys(attachedMedia);
+    if (mediaKeys.length > 50) {
+        const keysToRemove = mediaKeys.slice(0, mediaKeys.length - 50);
+        keysToRemove.forEach(key => delete attachedMedia[key]);
+        console.log(`🧹 Cleaned up ${keysToRemove.length} old media attachments`);
+    }
+}
+
+// Run cleanup every 10 minutes
+setInterval(cleanupOldMessages, 10 * 60 * 1000);
 
 // Function to download media for a specific message
 async function downloadMessageMedia(messageId, chatId) {
@@ -1222,8 +1259,13 @@ function loadMergedMessages() {
         }
         
         if (data.messages && data.messages.length > 0) {
-            // Store messages globally
-            allMessages = data.messages;
+            // Store messages globally, but limit to prevent memory leaks
+            allMessages = data.messages.slice(0, MAX_MESSAGES_IN_MEMORY);
+            
+            if (data.messages.length > MAX_MESSAGES_IN_MEMORY) {
+                console.warn(`⚠️ Memory optimization: Limiting messages from ${data.messages.length} to ${MAX_MESSAGES_IN_MEMORY}`);
+                showNotification(`Showing ${MAX_MESSAGES_IN_MEMORY} of ${data.messages.length} messages to optimize memory`, 'info');
+            }
             
             // Debug: Log sample messages to see isFromMe values
             console.log('[CLIENT] Received messages from server:', data.messages.length);
@@ -1536,8 +1578,24 @@ function addMessageToContainer(message) {
         </div>
     `;
     
-    // Store message for forwarding
+    // Store message for forwarding (with size limit)
     messageStore[message.id] = message;
+    
+    // Clean up old messages from messageStore if it gets too large
+    const storeKeys = Object.keys(messageStore);
+    if (storeKeys.length > MAX_MESSAGE_STORE_SIZE) {
+        // Remove oldest messages (keep most recent)
+        const sortedKeys = storeKeys.sort((a, b) => {
+            const msgA = messageStore[a];
+            const msgB = messageStore[b];
+            return (msgB?.timestamp || 0) - (msgA?.timestamp || 0);
+        });
+        
+        // Remove oldest entries
+        const keysToRemove = sortedKeys.slice(MAX_MESSAGE_STORE_SIZE);
+        keysToRemove.forEach(key => delete messageStore[key]);
+        console.log(`🧹 Cleaned up ${keysToRemove.length} old messages from messageStore`);
+    }
     
     messagesContainer.appendChild(messageDiv);
     

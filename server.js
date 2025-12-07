@@ -72,6 +72,12 @@ let scheduledMessages = [];
 let scheduleChecker = null;
 let isProcessingSchedules = false;
 
+// Memory management constants
+const MAX_MESSAGES_PER_REQUEST = 1000; // Maximum messages to return per request
+const MAX_MESSAGES_PER_CHAT = 200; // Maximum messages to fetch per chat
+const MEMORY_CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 minutes
+const MEMORY_WARNING_THRESHOLD = 0.9; // Warn if memory usage exceeds 90% of limit
+
 // WhatsApp client events
 client.on('qr', (qr) => {
   console.log('QR Code received');
@@ -474,7 +480,8 @@ async function handleMergedMessagesRequest(req, res) {
 
         // Calculate appropriate limit based on time range (roughly 50 messages per day)
         // If no filter, load minimum 30 to ensure we have enough data
-        const estimatedLimit = days > 0 ? Math.max(50, days * 50) : 350; // Default to 350 messages if no filter
+        // Cap at MAX_MESSAGES_PER_CHAT to prevent memory issues
+        const estimatedLimit = days > 0 ? Math.min(MAX_MESSAGES_PER_CHAT, Math.max(50, days * 50)) : Math.min(MAX_MESSAGES_PER_CHAT, 200); // Default to 200 messages if no filter, capped
         const messages = await chat.fetchMessages({ limit: estimatedLimit });
         console.log(`Messages fetched from ${phoneNumber}:`, messages.length);
 
@@ -642,7 +649,14 @@ async function handleMergedMessagesRequest(req, res) {
     // Sort messages by timestamp (newest first)
     allMessages.sort((a, b) => b.timestamp - a.timestamp);
 
-    console.log(`Total unique messages found: ${allMessages.length}`);
+    // Limit total messages to prevent memory issues
+    const limitedMessages = allMessages.slice(0, MAX_MESSAGES_PER_REQUEST);
+    
+    if (allMessages.length > MAX_MESSAGES_PER_REQUEST) {
+      console.log(`⚠️ Memory optimization: Limiting messages from ${allMessages.length} to ${MAX_MESSAGES_PER_REQUEST}`);
+    }
+
+    console.log(`Total unique messages found: ${allMessages.length} (returning ${limitedMessages.length})`);
 
     // Clear the timeout since we're responding
     clearTimeout(timeout);
@@ -650,8 +664,9 @@ async function handleMergedMessagesRequest(req, res) {
     // Check if response was already sent (by timeout)
     if (!res.headersSent) {
       res.json({
-        messages: allMessages,
-        totalMessages: allMessages.length,
+        messages: limitedMessages,
+        totalMessages: limitedMessages.length,
+        totalAvailable: allMessages.length, // Let client know there are more
         phoneNumbers: contactsToProcess
       });
     }
@@ -3362,10 +3377,60 @@ startScheduleChecker();
 // Initialize WhatsApp client
 client.initialize();
 
+// Memory cleanup function
+function performMemoryCleanup() {
+  try {
+    // Force garbage collection if available (requires --expose-gc flag)
+    if (global.gc) {
+      global.gc();
+      console.log('🧹 Memory cleanup: Garbage collection triggered');
+    }
+    
+    // Log memory usage
+    const memUsage = process.memoryUsage();
+    const memUsageMB = {
+      rss: Math.round(memUsage.rss / 1024 / 1024),
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+      external: Math.round(memUsage.external / 1024 / 1024)
+    };
+    
+    console.log('📊 Memory usage:', memUsageMB);
+    
+    // Warn if memory usage is high
+    const heapUsagePercent = (memUsage.heapUsed / memUsage.heapTotal) * 100;
+    if (heapUsagePercent > MEMORY_WARNING_THRESHOLD * 100) {
+      console.warn(`⚠️ High memory usage: ${heapUsagePercent.toFixed(1)}% of heap used`);
+    }
+  } catch (error) {
+    console.error('Error during memory cleanup:', error);
+  }
+}
+
+// Start periodic memory cleanup
+setInterval(performMemoryCleanup, MEMORY_CLEANUP_INTERVAL);
+console.log(`✅ Memory cleanup scheduled every ${MEMORY_CLEANUP_INTERVAL / 1000 / 60} minutes`);
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Open http://localhost:${PORT} in your browser`);
+  console.log(`💾 Memory limits: ${MAX_MESSAGES_PER_REQUEST} messages per request, ${MAX_MESSAGES_PER_CHAT} per chat`);
+  
+  // Log initial memory usage
+  const initialMem = process.memoryUsage();
+  console.log('📊 Initial memory usage:', {
+    rss: Math.round(initialMem.rss / 1024 / 1024) + ' MB',
+    heapTotal: Math.round(initialMem.heapTotal / 1024 / 1024) + ' MB',
+    heapUsed: Math.round(initialMem.heapUsed / 1024 / 1024) + ' MB'
+  });
+  
+  // Note about garbage collection
+  if (global.gc) {
+    console.log('✅ Garbage collection enabled (--expose-gc flag set)');
+  } else {
+    console.log('ℹ️  Garbage collection not enabled. For better memory management, start with: node --expose-gc server.js');
+  }
 });
 
 // List scheduled messages
