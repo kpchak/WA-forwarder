@@ -78,6 +78,11 @@ const MAX_MESSAGES_PER_CHAT = 200; // Maximum messages to fetch per chat
 const MEMORY_CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 minutes
 const MEMORY_WARNING_THRESHOLD = 0.9; // Warn if memory usage exceeds 90% of limit
 
+// Google Sheets caching
+let customerGroupsCache = null;
+let customerGroupsCacheTime = 0;
+const CUSTOMER_GROUPS_CACHE_TTL = Infinity; // Cache forever until manual refresh
+
 // WhatsApp client events
 client.on('qr', (qr) => {
   console.log('QR Code received');
@@ -1398,8 +1403,19 @@ app.post('/download-media', async (req, res) => {
 // Load customer groups from Google Sheets
 app.get('/groups/load', async (req, res) => {
   try {
-    console.log('Loading customer groups from Google Sheets...');
-    customerGroups = await loadCustomerGroups();
+    const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
+    
+    if (forceRefresh) {
+      console.log('🔄 Force refresh requested - loading from Google Sheets...');
+    } else {
+      console.log('📦 Loading groups (using cache if available)...');
+    }
+    
+    customerGroups = await loadCustomerGroups(forceRefresh);
+    
+    const cacheInfo = customerGroupsCacheTime > 0 
+      ? { cached: true, cacheAge: Math.round((Date.now() - customerGroupsCacheTime) / 1000) }
+      : { cached: false };
     
     console.log('Groups loaded successfully. Total groups:', Object.keys(customerGroups).length);
     console.log('Loaded group names:', Object.keys(customerGroups));
@@ -1408,7 +1424,10 @@ app.get('/groups/load', async (req, res) => {
       success: true,
       groups: customerGroups,
       totalGroups: Object.keys(customerGroups).length,
-      message: 'Customer groups loaded successfully'
+      message: forceRefresh 
+        ? 'Customer groups refreshed from Google Sheets' 
+        : 'Customer groups loaded (from cache)',
+      cacheInfo: cacheInfo
     });
   } catch (error) {
     console.error('Error loading groups:', error);
@@ -2608,13 +2627,28 @@ async function initializeGoogleSheets() {
   }
 }
 
-async function loadCustomerGroups() {
+async function loadCustomerGroups(forceRefresh = false) {
   try {
+    // Return cached data if available and not forcing refresh
+    if (!forceRefresh && customerGroupsCache && customerGroupsCacheTime > 0) {
+      const cacheAge = Date.now() - customerGroupsCacheTime;
+      console.log(`📦 Returning cached customer groups (cached ${Math.round(cacheAge / 1000)}s ago)`);
+      return customerGroupsCache;
+    }
+
     const sheets = await initializeGoogleSheets();
     if (!sheets) {
       console.log('Google Sheets not configured');
+      // Return cached data if available, even if Sheets not configured
+      if (customerGroupsCache) {
+        console.log('⚠️ Google Sheets not configured, returning cached data');
+        return customerGroupsCache;
+      }
       return {};
     }
+
+    console.log('🔄 Loading customer groups from Google Sheets...');
+    const startTime = Date.now();
 
     // Get all sheet names
     const spreadsheet = await sheets.spreadsheets.get({
@@ -2716,20 +2750,39 @@ async function loadCustomerGroups() {
       }
     }
 
+    const loadTime = Date.now() - startTime;
+    console.log(`✅ Loaded ${Object.keys(groups).length} groups in ${loadTime}ms`);
+
+    // Update cache
+    customerGroupsCache = groups;
+    customerGroupsCacheTime = Date.now();
+    customerGroups = groups; // Also update the global variable
+
     return groups;
   } catch (error) {
     console.error('Error loading customer groups:', error);
+    // Return cached data if available, even on error
+    if (customerGroupsCache) {
+      console.log('⚠️ Error loading groups, returning cached data');
+      return customerGroupsCache;
+    }
     return {};
   }
 }
 
 async function ensureGroupData() {
+  // Use cache if available, otherwise load
+  if (customerGroupsCache && customerGroupsCacheTime > 0) {
+    customerGroups = customerGroupsCache;
+    return;
+  }
+  
   if (customerGroups && Object.keys(customerGroups).length > 0) {
     return;
   }
-
-  console.log('[SCHEDULE] Customer group cache empty. Reloading from Google Sheets...');
-  customerGroups = await loadCustomerGroups();
+  
+  console.log('[SCHEDULE] Customer group cache empty. Loading from Google Sheets...');
+  customerGroups = await loadCustomerGroups(false); // Don't force refresh
 }
 
 function validateSchedulePayload(group, payload = {}, existingSchedule = null, options = {}) {

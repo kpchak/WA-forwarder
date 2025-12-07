@@ -1148,6 +1148,53 @@ header p {
     gap: 4px;
 }
 
+/* Filter Preset Styles */
+.saved-preset-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background: #f9f9f9;
+    transition: background 0.2s;
+    margin-bottom: 10px;
+}
+
+.saved-preset-item:hover {
+    background: #f0f0f0;
+}
+
+.preset-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+
+.preset-details {
+    display: flex;
+    gap: 15px;
+    font-size: 0.85rem;
+    color: #666;
+    flex-wrap: wrap;
+}
+
+.preset-filters,
+.preset-phones,
+.preset-date {
+    display: inline-block;
+}
+
+.preset-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.filter-presets-section {
+    margin-bottom: 20px;
+}
+
 .list-info strong {
     color: #333;
     font-size: 16px;

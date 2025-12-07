@@ -63,7 +63,7 @@
                 <div class="groups-header">
                     <h2>Customer Groups</h2>
                     <div class="header-actions">
-                        <button id="loadGroupsBtn" class="btn btn-primary">
+                        <button id="loadGroupsBtn" class="btn btn-primary" title="Click to load from cache, double-click to refresh from Google Sheets">
                             <i class="fas fa-sync"></i> Load from Google Sheets
                         </button>
                     </div>
@@ -290,6 +290,20 @@
                 <button id="scrollToBottom" class="scroll-to-bottom" style="display: none;">
                     <i class="fas fa-arrow-down"></i>
                 </button>
+                
+                <!-- Filter Presets Management -->
+                <div class="filter-presets-section" style="margin-bottom: 20px; padding: 15px; background: #e7f3ff; border-radius: 8px; border: 1px solid #2196F3;">
+                    <h3 style="margin-top: 0; margin-bottom: 10px;"><i class="fas fa-bookmark"></i> Filter Presets</h3>
+                    <p style="margin-bottom: 15px; color: #666; font-size: 0.9rem;">Save your filter combinations (time, text, customer filters + phone numbers) for quick reuse.</p>
+                    <div class="preset-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button id="saveFilterPresetBtn" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Save Current Filter Preset
+                        </button>
+                        <button id="loadFilterPresetsBtn" class="btn btn-info">
+                            <i class="fas fa-folder-open"></i> Load Saved Filter Preset
+                        </button>
+                    </div>
+                </div>
                 
                 <!-- Time Range Filter -->
                 <div class="time-filter-section">

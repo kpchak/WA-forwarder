@@ -519,6 +519,16 @@ function setupEventListeners() {
     if (customerListBtn) {
         customerListBtn.addEventListener('click', showCustomerListModal);
     }
+    
+    // Filter preset buttons
+    const saveFilterPresetBtn = document.getElementById('saveFilterPresetBtn');
+    const loadFilterPresetsBtn = document.getElementById('loadFilterPresetsBtn');
+    if (saveFilterPresetBtn) {
+        saveFilterPresetBtn.addEventListener('click', saveFilterPreset);
+    }
+    if (loadFilterPresetsBtn) {
+        loadFilterPresetsBtn.addEventListener('click', showSavedFilterPresets);
+    }
     loadChatsBtn.addEventListener('click', loadAllChats);
     showAllBtn.addEventListener('click', () => filterChats('all'));
     showContactsBtn.addEventListener('click', () => filterChats('contacts'));
@@ -561,7 +571,23 @@ function setupEventListeners() {
     });
     
     // Groups event listeners
-    loadGroupsBtn.addEventListener('click', loadCustomerGroups);
+    // Single click = load from cache, double click = force refresh
+    let clickTimeout;
+    loadGroupsBtn.addEventListener('click', function(e) {
+        clearTimeout(clickTimeout);
+        clickTimeout = setTimeout(() => {
+            // Single click - load from cache
+            loadCustomerGroups(false);
+        }, 300);
+    });
+    
+    loadGroupsBtn.addEventListener('dblclick', function(e) {
+        e.preventDefault();
+        clearTimeout(clickTimeout);
+        // Double click - force refresh
+        showNotification('Refreshing groups from Google Sheets...', 'info');
+        loadCustomerGroups(true);
+    });
     backToGroupsBtn.addEventListener('click', () => showSection('groups'));
     sendGroupMessageBtn.addEventListener('click', sendGroupMessage);
     previewGroupBtn.addEventListener('click', previewGroupMessage);
@@ -1923,6 +1949,307 @@ function getSavedLists() {
     }
 }
 
+// Filter Preset Storage Functions
+function getSavedFilterPresets() {
+    try {
+        const saved = localStorage.getItem('whatsapp_saved_filter_presets');
+        return saved ? JSON.parse(saved) : {};
+    } catch (error) {
+        console.error('Error loading saved filter presets:', error);
+        return {};
+    }
+}
+
+function saveFilterPreset() {
+    // Collect current filter state
+    const filterState = collectCurrentFilterState();
+    
+    if (!filterState.hasAnyFilters && currentPhoneNumbers.length === 0) {
+        showNotification('No filters or phone numbers to save', 'error');
+        return;
+    }
+    
+    const presetName = prompt('Enter a name for this filter preset (e.g., "Today MM clients message"):');
+    if (!presetName || presetName.trim() === '') {
+        showNotification('Preset name cannot be empty', 'error');
+        return;
+    }
+    
+    const savedPresets = getSavedFilterPresets();
+    savedPresets[presetName.trim()] = {
+        filters: filterState,
+        phoneNumbers: [...currentPhoneNumbers],
+        timestamp: new Date().toISOString(),
+        hasFilters: filterState.hasAnyFilters,
+        phoneCount: currentPhoneNumbers.length
+    };
+    
+    localStorage.setItem('whatsapp_saved_filter_presets', JSON.stringify(savedPresets));
+    showNotification(`Filter preset "${presetName}" saved successfully!`, 'success');
+}
+
+function deleteFilterPreset(presetName) {
+    const savedPresets = getSavedFilterPresets();
+    delete savedPresets[presetName];
+    localStorage.setItem('whatsapp_saved_filter_presets', JSON.stringify(savedPresets));
+    showNotification(`Filter preset "${presetName}" deleted`, 'success');
+}
+
+function collectCurrentFilterState() {
+    // Collect all current filter settings
+    const state = {
+        // Time filter
+        timeFilter: {
+            enabled: timeFilter.enabled,
+            fromDate: fromDate ? fromDate.value : null,
+            toDate: toDate ? toDate.value : null,
+            fromTime: fromTimeSlider ? parseInt(fromTimeSlider.value) : null,
+            toTime: toTimeSlider ? parseInt(toTimeSlider.value) : null
+        },
+        // Text filter
+        textFilter: {
+            enabled: textFilterEnabled,
+            pattern: textFilterPattern,
+            displayValue: textFilterDisplayValue
+        },
+        // Hours filter
+        hoursFilter: {
+            enabled: hoursFilterEnabled,
+            value: hoursFilterValue
+        },
+        // Customer filter
+        customerFilter: {
+            enabled: customerFilterEnabled,
+            selectedPhone: selectedCustomerPhone
+        },
+        hasAnyFilters: false
+    };
+    
+    // Check if any filters are active
+    state.hasAnyFilters = 
+        state.timeFilter.enabled ||
+        state.textFilter.enabled ||
+        state.hoursFilter.enabled ||
+        (state.customerFilter.enabled && state.customerFilter.selectedPhone !== null);
+    
+    return state;
+}
+
+function applyFilterPreset(preset) {
+    if (!preset || !preset.filters) {
+        showNotification('Invalid filter preset', 'error');
+        return;
+    }
+    
+    const filters = preset.filters;
+    let shouldReloadMessages = false;
+    
+    // Step 1: Apply phone numbers first (if any)
+    if (preset.phoneNumbers && preset.phoneNumbers.length > 0) {
+        currentPhoneNumbers = [...preset.phoneNumbers];
+        updatePhoneList();
+        updateSetPhoneButton();
+        shouldReloadMessages = true; // Will reload after all filters are set
+    }
+    
+    // Step 2: Apply time filter settings (but don't trigger reload yet)
+    if (filters.timeFilter) {
+        if (fromDate && filters.timeFilter.fromDate) {
+            fromDate.value = filters.timeFilter.fromDate;
+        }
+        if (toDate && filters.timeFilter.toDate) {
+            toDate.value = filters.timeFilter.toDate;
+        }
+        if (fromTimeSlider && filters.timeFilter.fromTime !== null) {
+            fromTimeSlider.value = filters.timeFilter.fromTime;
+            updateFromTimeDisplay();
+        }
+        if (toTimeSlider && filters.timeFilter.toTime !== null) {
+            toTimeSlider.value = filters.timeFilter.toTime;
+            updateToTimeDisplay();
+        }
+        timeFilter.enabled = filters.timeFilter.enabled || false;
+        updateTimeRangeSummary();
+        
+        // If time filter is enabled and we have phone numbers, we'll reload with time filter
+        if (timeFilter.enabled && currentPhoneNumbers.length > 0) {
+            // Set up timeFilter dates for server-side filtering
+            if (fromDate && toDate && fromTimeSlider && toTimeSlider) {
+                const fromDateValue = fromDate.value;
+                const toDateValue = toDate.value;
+                const fromTimeValue = parseInt(fromTimeSlider.value);
+                const toTimeValue = parseInt(toTimeSlider.value);
+                
+                const [fromYear, fromMonth, fromDay] = fromDateValue.split('-').map(Number);
+                const fromDateTime = new Date(fromYear, fromMonth - 1, fromDay, 
+                                              Math.floor(fromTimeValue / 60), fromTimeValue % 60, 0, 0);
+                
+                const [toYear, toMonth, toDay] = toDateValue.split('-').map(Number);
+                const toDateTime = new Date(toYear, toMonth - 1, toDay,
+                                            Math.floor(toTimeValue / 60), toTimeValue % 60, 59, 999);
+                
+                timeFilter.fromDate = fromDateTime;
+                timeFilter.toDate = toDateTime;
+            }
+            shouldReloadMessages = true;
+        }
+    }
+    
+    // Step 3: Apply text filter settings
+    if (filters.textFilter) {
+        textFilterEnabled = filters.textFilter.enabled || false;
+        textFilterPattern = filters.textFilter.pattern || '';
+        textFilterDisplayValue = filters.textFilter.displayValue || '';
+        
+        if (textFilterInput) {
+            textFilterInput.value = textFilterDisplayValue;
+        }
+    }
+    
+    // Step 4: Apply hours filter settings
+    if (filters.hoursFilter) {
+        hoursFilterEnabled = filters.hoursFilter.enabled || false;
+        hoursFilterValue = filters.hoursFilter.value || 0;
+        
+        if (hoursFilter) {
+            hoursFilter.value = hoursFilterValue;
+        }
+    }
+    
+    // Step 5: Apply customer filter settings
+    if (filters.customerFilter) {
+        customerFilterEnabled = filters.customerFilter.enabled !== undefined ? filters.customerFilter.enabled : true;
+        selectedCustomerPhone = filters.customerFilter.selectedPhone || null;
+        
+        // Update customer selector dropdown
+        const customerSelector = document.getElementById('customerSelector');
+        if (customerSelector) {
+            customerSelector.value = selectedCustomerPhone || '';
+        }
+        
+        // Update toggle button
+        if (toggleCustomerMessagesBtn && toggleCustomerMessagesText) {
+            if (customerFilterEnabled) {
+                toggleCustomerMessagesBtn.className = 'btn btn-success';
+                toggleCustomerMessagesText.textContent = 'Show All Messages';
+            } else {
+                toggleCustomerMessagesBtn.className = 'btn btn-secondary';
+                toggleCustomerMessagesText.textContent = 'Hide My Messages';
+            }
+        }
+    }
+    
+    // Step 6: Reload messages if needed (with all filters applied)
+    if (shouldReloadMessages && isConnected && currentPhoneNumbers.length > 0) {
+        loadMergedMessages();
+    } else if (allMessages.length > 0) {
+        // Messages already loaded, apply client-side filters
+        applyAllActiveFilters();
+    }
+    
+    showNotification(`Filter preset "${preset.name || 'preset'}" applied successfully`, 'success');
+}
+
+function loadFilterPreset(presetName) {
+    const savedPresets = getSavedFilterPresets();
+    const preset = savedPresets[presetName];
+    
+    if (!preset) {
+        showNotification('Filter preset not found', 'error');
+        return;
+    }
+    
+    // Add preset name to preset object for display
+    preset.name = presetName;
+    applyFilterPreset(preset);
+}
+
+function showSavedFilterPresets() {
+    const savedPresets = getSavedFilterPresets();
+    const presetNames = Object.keys(savedPresets);
+    
+    if (presetNames.length === 0) {
+        showNotification('No saved filter presets found', 'info');
+        return;
+    }
+    
+    // Create modal for preset selection
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Load Saved Filter Preset</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="saved-presets">
+                    ${presetNames.map(name => {
+                        const preset = savedPresets[name];
+                        const date = new Date(preset.timestamp).toLocaleDateString();
+                        const filterSummary = [];
+                        if (preset.filters.timeFilter?.enabled) filterSummary.push('Time');
+                        if (preset.filters.textFilter?.enabled) filterSummary.push('Text');
+                        if (preset.filters.hoursFilter?.enabled) filterSummary.push('Hours');
+                        if (preset.filters.customerFilter?.enabled) filterSummary.push('Customer');
+                        const summary = filterSummary.length > 0 ? filterSummary.join(', ') : 'No filters';
+                        return `
+                            <div class="saved-preset-item" data-name="${name}">
+                                <div class="preset-info">
+                                    <strong>${name}</strong>
+                                    <div class="preset-details">
+                                        <span class="preset-filters">Filters: ${summary}</span>
+                                        <span class="preset-phones">${preset.phoneCount || 0} phone numbers</span>
+                                        <span class="preset-date">${date}</span>
+                                    </div>
+                                </div>
+                                <div class="preset-actions">
+                                    <button class="btn btn-primary btn-sm load-preset-btn" data-name="${name}">Load</button>
+                                    <button class="btn btn-danger btn-sm delete-preset-btn" data-name="${name}">Delete</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Event listeners for modal
+    modal.querySelector('.modal-close').addEventListener('click', () => {
+        document.body.removeChild(modal);
+    });
+    
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            document.body.removeChild(modal);
+        }
+    });
+    
+    // Load preset button
+    modal.querySelectorAll('.load-preset-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const presetName = e.target.dataset.name;
+            loadFilterPreset(presetName);
+            document.body.removeChild(modal);
+        });
+    });
+    
+    // Delete preset button
+    modal.querySelectorAll('.delete-preset-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const presetName = e.target.dataset.name;
+            if (confirm(`Are you sure you want to delete "${presetName}"?`)) {
+                deleteFilterPreset(presetName);
+                document.body.removeChild(modal);
+                showSavedFilterPresets(); // Refresh the modal
+            }
+        });
+    });
+}
+
 // Navigation and Section Management
 function showSection(sectionName) {
     // Hide all sections
@@ -2124,7 +2451,7 @@ function toggleMessageView() {
 }
 
 // Customer Groups Management
-async function loadCustomerGroups() {
+async function loadCustomerGroups(forceRefresh = false) {
     try {
         if (loadingGroups) {
             loadingGroups.style.display = 'block';
@@ -2133,14 +2460,34 @@ async function loadCustomerGroups() {
             groupsContainer.innerHTML = '';
         }
         
-        const response = await fetch('/groups/load');
+        // Add refresh parameter to URL
+        const url = forceRefresh 
+            ? '/groups/load?refresh=true' 
+            : '/groups/load';
+        
+        const response = await fetch(url);
         const data = await response.json();
         
         if (data.success) {
             currentGroups = data.groups;
             console.log('Groups loaded successfully:', Object.keys(currentGroups).length, 'groups');
+            
+            // Show cache info if available
+            if (data.cacheInfo && data.cacheInfo.cached) {
+                const cacheAgeMinutes = Math.round(data.cacheInfo.cacheAge / 60);
+                console.log(`📦 Groups loaded from cache (${cacheAgeMinutes} minutes old)`);
+                if (!forceRefresh) {
+                    showNotification(`Groups loaded from cache (${cacheAgeMinutes} min old). Double-click to refresh.`, 'info');
+                }
+            }
+            
             displayGroups(currentGroups);
-            showNotification(`Loaded ${data.totalGroups} customer groups`, 'success');
+            showNotification(
+                forceRefresh 
+                    ? `Refreshed ${data.totalGroups} customer groups from Google Sheets` 
+                    : `Loaded ${data.totalGroups} customer groups`,
+                'success'
+            );
         } else {
             console.error('Failed to load groups:', data.error);
             showNotification('Failed to load groups: ' + data.error, 'error');
