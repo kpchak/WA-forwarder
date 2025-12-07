@@ -1996,6 +1996,12 @@ function deleteFilterPreset(presetName) {
 }
 
 function collectCurrentFilterState() {
+    // Get today's date in YYYY-MM-DD format for comparison
+    const today = new Date();
+    const todayStr = today.getFullYear() + '-' + 
+                    String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+                    String(today.getDate()).padStart(2, '0');
+    
     // Collect all current filter settings
     const state = {
         // Time filter
@@ -2004,7 +2010,10 @@ function collectCurrentFilterState() {
             fromDate: fromDate ? fromDate.value : null,
             toDate: toDate ? toDate.value : null,
             fromTime: fromTimeSlider ? parseInt(fromTimeSlider.value) : null,
-            toTime: toTimeSlider ? parseInt(toTimeSlider.value) : null
+            toTime: toTimeSlider ? parseInt(toTimeSlider.value) : null,
+            // Store flags to detect if dates were "today" when saved
+            isFromDateToday: fromDate && fromDate.value === todayStr,
+            isToDateToday: toDate && toDate.value === todayStr
         },
         // Text filter
         textFilter: {
@@ -2054,12 +2063,34 @@ function applyFilterPreset(preset) {
     
     // Step 2: Apply time filter settings (but don't trigger reload yet)
     if (filters.timeFilter) {
+        // Get today's date in YYYY-MM-DD format for "today" replacement
+        const today = new Date();
+        const todayStr = today.getFullYear() + '-' + 
+                        String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+                        String(today.getDate()).padStart(2, '0');
+        
+        // Apply fromDate - use current date if it was "today" when saved
         if (fromDate && filters.timeFilter.fromDate) {
-            fromDate.value = filters.timeFilter.fromDate;
+            if (filters.timeFilter.isFromDateToday) {
+                // It was "today" when saved, so use current "today"
+                fromDate.value = todayStr;
+            } else {
+                // Use the exact saved date
+                fromDate.value = filters.timeFilter.fromDate;
+            }
         }
+        
+        // Apply toDate - use current date if it was "today" when saved
         if (toDate && filters.timeFilter.toDate) {
-            toDate.value = filters.timeFilter.toDate;
+            if (filters.timeFilter.isToDateToday) {
+                // It was "today" when saved, so use current "today"
+                toDate.value = todayStr;
+            } else {
+                // Use the exact saved date
+                toDate.value = filters.timeFilter.toDate;
+            }
         }
+        
         if (fromTimeSlider && filters.timeFilter.fromTime !== null) {
             fromTimeSlider.value = filters.timeFilter.fromTime;
             updateFromTimeDisplay();
