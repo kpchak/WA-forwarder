@@ -37,3 +37,7 @@ Gsheet/*.json
 # Build outputs
 dist/
 build/
+
+# Archives (e.g. client zips)
+*.zip
+RemoteAuth-whatsapp-forwarder-client.zip
