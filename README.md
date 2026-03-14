@@ -121,26 +121,17 @@ npm run dev
 
 ## 🚀 Want to Host Online?
 
-**Quick Deploy Guide**: **[QUICK_DEPLOY.md](QUICK_DEPLOY.md)** - Get online in 5 minutes (FREE!)
+See **[Railway Deployment Guide](RAILWAY_DEPLOYMENT.md)** for step-by-step instructions to deploy to Railway (free tier available).
 
-### Best Options:
-- 🥇 **Railway** - FREE tier, easiest setup (recommended)
-- 🥈 **Render** - FREE tier, auto-deploy
-- 💰 **Paid options** - $5-7/month for 24/7 hosting
+### Recommended:
+- 🥇 **Railway** - FREE tier available, easy setup, automatic deployments from GitHub
 
 ## Documentation
 
 For detailed setup and configuration:
-- **[🚀 Quick Deploy](QUICK_DEPLOY.md)** - All hosting options explained
-- **[🚀 Quick Start - Free Hosting](QUICK_START_FREE.md)** - Railway step-by-step
-- **[✨ Auto-Detect Groups](AUTO_DETECT_GROUPS_FEATURE.md)** - Auto-add `@g.us` to group IDs
-- **[How to Add Groups](HOW_TO_ADD_GROUPS_TO_GOOGLE_SHEETS.md)** - Add WhatsApp groups to Google Sheets
-- [Free Hosting Options](FREE_HOSTING_OPTIONS.md) - 🆓 All free deployment options
-- [Setup Instructions](SETUP_INSTRUCTIONS.md) - Complete setup guide
-- [Deployment Guide](DEPLOYMENT_GUIDE.md) - Server deployment instructions
-- [Google Sheets Setup](GOOGLE_SHEETS_SETUP.md) - Google Sheets integration
-- [Railway Volume Setup](RAILWAY_VOLUME_SETUP.md) - Persist WhatsApp sessions
-- [Optimization Notes](OPTIMIZATION_NOTES.md) - Performance and deployment tips
+- **[Railway Deployment Guide](RAILWAY_DEPLOYMENT.md)** - Step-by-step Railway deployment (recommended)
+- **[Google Sheets Setup](GOOGLE_SHEETS_SETUP.md)** - Google Sheets integration guide
+- **[How to Add WhatsApp Groups](HOW_TO_ADD_GROUPS_TO_GOOGLE_SHEETS.md)** - Add WhatsApp groups to Google Sheets
 
 ## License
 

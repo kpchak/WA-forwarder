@@ -912,6 +912,40 @@ socket.on('clientReady', function(data) {
 });
 
 socket.on('authFailure', function(data) {
+    console.error('❌ Authentication failed:', data.message);
+    
+    // Check if this is a "link device" error
+    if (data.isLinkDeviceError) {
+        console.error('❌ "Could not link device" error detected');
+        console.error('❌ This usually means WhatsApp temporarily blocked the connection');
+        
+        // Show detailed error message to user
+        let errorMessage = '❌ Could not link device. Please try again later.\n\n';
+        errorMessage += 'This usually happens when:\n';
+        errorMessage += '• Too many connection attempts\n';
+        errorMessage += '• Phone WhatsApp is not active\n';
+        errorMessage += '• Multiple devices trying to connect\n\n';
+        
+        if (data.recommendations && data.recommendations.length > 0) {
+            errorMessage += 'Recommendations:\n';
+            data.recommendations.forEach((rec, idx) => {
+                errorMessage += `${idx + 1}. ${rec}\n`;
+            });
+        }
+        
+        if (data.failureCount >= 3) {
+            errorMessage += '\n⚠️ Multiple failures detected. Please wait 5-10 minutes before trying again.';
+        }
+        
+        showNotification(errorMessage, 'error', 15000); // Show for 15 seconds
+        
+        // Update status
+        updateStatus('error', 'Connection Failed - Wait before retrying');
+    } else {
+        // Generic auth failure
+        showNotification('Authentication failed: ' + (data.message || 'Unknown error'), 'error');
+        updateStatus('error', 'Authentication Failed');
+    }
     console.error('Authentication failed:', data.message);
     showError('Authentication failed: ' + data.message);
 });
@@ -1288,9 +1322,17 @@ function loadMergedMessages() {
             // Store messages globally, but limit to prevent memory leaks
             allMessages = data.messages.slice(0, MAX_MESSAGES_IN_MEMORY);
             
-            if (data.messages.length > MAX_MESSAGES_IN_MEMORY) {
-                console.warn(`⚠️ Memory optimization: Limiting messages from ${data.messages.length} to ${MAX_MESSAGES_IN_MEMORY}`);
-                showNotification(`Showing ${MAX_MESSAGES_IN_MEMORY} of ${data.messages.length} messages to optimize memory`, 'info');
+            // Check if server truncated messages using totalAvailable (actual count) vs totalMessages (returned count)
+            const totalAvailable = data.totalAvailable || data.messages.length;
+            const messagesReturned = data.messages.length;
+            
+            if (totalAvailable > MAX_MESSAGES_IN_MEMORY) {
+                console.warn(`⚠️ Memory optimization: ${totalAvailable} messages available, showing ${Math.min(messagesReturned, MAX_MESSAGES_IN_MEMORY)} messages`);
+                showNotification(`Showing ${Math.min(messagesReturned, MAX_MESSAGES_IN_MEMORY)} of ${totalAvailable} available messages to optimize memory`, 'info');
+            } else if (totalAvailable > messagesReturned) {
+                // Server truncated but within our memory limit
+                console.warn(`⚠️ Server truncated messages: ${totalAvailable} available, ${messagesReturned} returned`);
+                showNotification(`Showing ${messagesReturned} of ${totalAvailable} available messages`, 'info');
             }
             
             // Debug: Log sample messages to see isFromMe values
@@ -2884,6 +2926,10 @@ function displayGroupRecipients(group) {
     updateRecipientCount();
     
     console.log(`Displayed ${group.customers.length} recipients for group: ${group.name}`);
+    // #region agent log
+    const customerPhones = group.customers.map(c => c.phone);
+    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2928',message:'displayGroupRecipients: customer phone values set in checkboxes',data:{groupName:group.name,customerCount:group.customers.length,customerPhones:customerPhones.slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
 }
 
 function updateRecipientSelection(checkbox, itemDiv) {
@@ -2942,8 +2988,21 @@ async function sendGroupMessage() {
     }
     
     // Collect selected recipients
+    // #region agent log
+    const recipientsListExists = recipientsList !== null;
+    const recipientsListChildren = recipientsList ? recipientsList.children.length : 0;
+    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2987',message:'sendGroupMessage: BEFORE collecting checkboxes',data:{recipientsListExists,recipientsListChildren,selectedGroup},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     const selectedCheckboxes = recipientsList.querySelectorAll('input[type="checkbox"]:checked');
+    // #region agent log
+    const checkboxCount = selectedCheckboxes.length;
+    const allCheckboxes = recipientsList ? recipientsList.querySelectorAll('input[type="checkbox"]').length : 0;
+    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2988',message:'sendGroupMessage: checkboxes found',data:{checkedCount:checkboxCount,totalCheckboxes:allCheckboxes},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     const selectedPhones = Array.from(selectedCheckboxes).map(cb => cb.value);
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2989',message:'sendGroupMessage: selectedPhones collected',data:{selectedPhonesCount:selectedPhones.length,selectedPhones:selectedPhones.slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     
     if (selectedPhones.length === 0) {
         showNotification('Please select at least one recipient', 'error');
@@ -2954,23 +3013,38 @@ async function sendGroupMessage() {
         sendGroupMessageBtn.disabled = true;
         sendGroupMessageBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
         
+        // #region agent log
+        const requestBody = {message,mediaUrl,selectedPhones};
+        fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2999',message:'sendGroupMessage: sending request',data:{groupName:selectedGroup,selectedPhonesCount:selectedPhones.length,selectedPhones:selectedPhones.slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
         const response = await fetch(`/groups/${selectedGroup}/send`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                message: message,
-                mediaUrl: mediaUrl,
-                selectedPhones: selectedPhones
-            })
+            body: JSON.stringify(requestBody)
         });
         
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:3028',message:'sendGroupMessage: response received',data:{status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
         const data = await response.json();
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:3029',message:'sendGroupMessage: response data',data:{success:data.success,successCount:data.successCount,error:data.error,errorCount:data.errorCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
         
         if (data.success) {
             displayGroupMessageResults(data);
-            showNotification(`Message sent to ${data.successCount} out of ${selectedPhones.length} selected recipients`, 'success');
+            
+            // Check if there are any warnings in the results
+            const hasWarnings = data.results && data.results.some(r => r.warning);
+            let notificationMessage = `Message sent to ${data.successCount} out of ${selectedPhones.length} selected recipients`;
+            
+            if (hasWarnings) {
+                notificationMessage += ' (some with warnings - see details below)';
+            }
+            
+            showNotification(notificationMessage, hasWarnings ? 'warning' : 'success');
         } else {
             showNotification('Failed to send group message: ' + data.error, 'error');
         }
@@ -3006,6 +3080,9 @@ function displayGroupMessageResults(data) {
         <div class="result-list">
             ${data.results.map(result => `
                 <div class="result-item ${result.status === 'sent' ? 'success' : 'error'}">
+                    ${result.warning ? `<div class="result-warning" style="color: #ff9800; font-size: 0.85em; margin-bottom: 5px;">
+                        ⚠️ ${result.warning}
+                    </div>` : ''}
                     <div class="result-customer">
                         <div class="result-customer-name">${result.name}</div>
                         <div class="result-customer-phone">${result.phone}</div>
