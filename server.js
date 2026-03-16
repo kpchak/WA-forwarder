@@ -85,7 +85,7 @@ const apiLimiter = rateLimit({
 });
 
 // Environment detection for production optimizations
-const isProduction = process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT === 'production';
+const isProduction = process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT === 'production' || process.env.HOSTINGER === 'true';
 
 // Only disable cache for script.js in development to ensure fresh code loads
 if (!isProduction) {
@@ -106,21 +106,44 @@ app.use(express.static('public', {
 
 // WhatsApp client setup with LocalAuth
 // Disable webCache to avoid LocalWebCache.persist null error in version 1.22.0
+const puppeteerArgs = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-extensions',
+  '--disable-background-networking',
+  '--disable-default-apps',
+  '--disable-sync',
+  '--disable-translate',
+  '--metrics-recording-only',
+  '--no-first-run',
+  '--mute-audio',
+  '--hide-scrollbars',
+  '--single-process',
+  '--no-zygote',
+];
+
+if (isProduction) {
+  puppeteerArgs.push(
+    '--disable-software-rasterizer',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    `--js-flags=--max-old-space-size=${process.env.CHROMIUM_MAX_OLD_SPACE || 256}`
+  );
+}
+
 const client = new Client({
   authStrategy: new LocalAuth({
     dataPath: path.join(__dirname, '.wwebjs_auth')
   }),
   webVersionCache: {
-    type: 'none' // Disable webCache to prevent null errors
+    type: 'none'
   },
   puppeteer: {
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu'
-    ],
+    args: puppeteerArgs,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
   }
 });
@@ -691,6 +714,26 @@ client.on('authenticated', () => {
     console.warn(`⚠️ WARNING: Authenticated event fired ${authenticatedEventCount} times!`);
     console.warn('⚠️ This might cause multiple ready events and trigger WhatsApp security');
   }
+
+  // Session resume often fires 'authenticated' but not 'ready' - check state after a short delay
+  setTimeout(async () => {
+    if (!client || isClientReady) return;
+    try {
+      const state = await client.getState();
+      if (state === 'CONNECTED' && !isClientReady && !firstReadyProcessed) {
+        console.warn('⚠️ Authenticated: Client is CONNECTED but ready never fired. Forcing ready...');
+        firstReadyProcessed = true;
+        isClientReady = true;
+        isReconnecting = false;
+        isInitializing = false;
+        client._readyTime = Date.now();
+        if (io) io.emit('clientReady', { message: 'WhatsApp client is ready!', timestamp: new Date().toISOString(), forced: true });
+        startKeepAlive();
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, 2500);
 });
 
 client.on('auth_failure', (msg) => {
@@ -1038,12 +1081,11 @@ app.get('/messages/:phoneNumber', async (req, res) => {
         senderName = 'You';
         senderPhone = 'Me';
       } else {
-        // Extract phone number from the 'from' field
-        senderPhone = msg.from.replace('@c.us', '').replace('@g.us', '');
+        const senderId = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
+        senderPhone = (senderId || '').replace('@c.us', '').replace('@g.us', '');
 
-        // Try to get contact name (with timeout to prevent hanging)
         try {
-          const contactPromise = client.getContactById(msg.from);
+          const contactPromise = client.getContactById(senderId);
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Timeout')), 2000)
           );
@@ -1059,10 +1101,11 @@ app.get('/messages/:phoneNumber', async (req, res) => {
         }
       }
 
+      const senderIdForFrom = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
       const messageData = {
         id: msg.id._serialized,
         body: msg.body || '',
-        from: msg.from,
+        from: senderIdForFrom,
         timestamp: msg.timestamp,
         type: msg.type,
         isFromMe: msg.fromMe,
@@ -1291,18 +1334,17 @@ async function handleMergedMessagesRequest(req, res) {
           let senderPhone = '';
 
           if (msg.fromMe) {
-            console.log(`[DEBUG] Processing message from You: ${msg.body?.substring(0, 50)}...`);
             senderName = 'You';
             senderPhone = 'Me';
           } else {
-            // Extract phone number from the 'from' field
-            senderPhone = msg.from.replace('@c.us', '').replace('@g.us', '');
+            // For group chats, msg.from is the group ID; msg.author is the participant who sent the message
+            const senderId = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
+            senderPhone = (senderId || '').replace('@c.us', '').replace('@g.us', '');
 
-            // Try to get contact name (with shorter timeout to prevent hanging)
             try {
-              const contactPromise = client.getContactById(msg.from);
+              const contactPromise = client.getContactById(senderId);
               const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout')), 500) // Reduced from 2000ms to 500ms
+                setTimeout(() => reject(new Error('Timeout')), 500)
               );
               const contact = await Promise.race([contactPromise, timeoutPromise]);
               if (contact && contact.name) {
@@ -1311,15 +1353,15 @@ async function handleMergedMessagesRequest(req, res) {
                 senderName = senderPhone;
               }
             } catch (error) {
-              // If timeout or error, just use phone number
               senderName = senderPhone;
             }
           }
 
+          const senderIdForFrom = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
           const messageData = {
             id: msg.id._serialized,
             body: msg.body || '',
-            from: msg.from,
+            from: senderIdForFrom,
             timestamp: msg.timestamp,
             type: msg.type,
             isFromMe: msg.fromMe,
@@ -1327,7 +1369,7 @@ async function handleMergedMessagesRequest(req, res) {
             mediaUrl: null,
             mediaFilename: null,
             mediaMimetype: null,
-            sourcePhone: phoneNumber, // Track which phone number this came from
+            sourcePhone: phoneNumber,
             senderName: senderName,
             senderPhone: senderPhone,
             chatName: chatName
@@ -1456,8 +1498,11 @@ app.post('/messages-merged', apiLimiter, handleMergedMessagesRequest);
 
 // New endpoint to get all available chats (contacts and groups)
 app.get('/chats', async (req, res) => {
+  if (!client) {
+    return res.status(400).json({ error: 'WhatsApp client not initialized', details: 'Please scan the QR code first.' });
+  }
   if (!isClientReady) {
-    return res.status(400).json({ error: 'WhatsApp client not ready' });
+    return res.status(400).json({ error: 'WhatsApp client not ready', details: 'Wait for the app to show connected, or scan the QR code again.' });
   }
 
   try {
@@ -1466,17 +1511,28 @@ app.get('/chats', async (req, res) => {
     const chats = await client.getChats();
     console.log(`Found ${chats.length} chats`);
 
-    const formattedChats = chats.map(chat => ({
-      id: chat.id._serialized,
-      name: chat.name || 'Unknown',
-      isGroup: chat.isGroup,
-      unreadCount: chat.unreadCount,
-      lastMessage: chat.lastMessage ? {
-        body: chat.lastMessage.body || '',
-        timestamp: chat.lastMessage.timestamp,
-        from: chat.lastMessage.from
-      } : null
-    }));
+    const formattedChats = [];
+    for (const chat of chats) {
+      try {
+        const id = (chat.id && (typeof chat.id._serialized === 'string' ? chat.id._serialized : chat.id)) || String(chat.id);
+        const lastMessage = chat.lastMessage
+          ? {
+              body: chat.lastMessage.body != null ? String(chat.lastMessage.body) : '',
+              timestamp: chat.lastMessage.timestamp != null ? chat.lastMessage.timestamp : 0,
+              from: chat.lastMessage.from
+            }
+          : null;
+        formattedChats.push({
+          id,
+          name: chat.name || 'Unknown',
+          isGroup: !!chat.isGroup,
+          unreadCount: chat.unreadCount || 0,
+          lastMessage
+        });
+      } catch (err) {
+        console.warn('Skipping one chat due to error:', err.message);
+      }
+    }
 
     // Sort by last message timestamp (most recent first)
     formattedChats.sort((a, b) => {
@@ -1496,7 +1552,7 @@ app.get('/chats', async (req, res) => {
     console.error('Error fetching chats:', error);
     res.status(500).json({
       error: 'Failed to fetch chats',
-      details: error.message
+      details: error.message || String(error)
     });
   }
 });
@@ -3088,11 +3144,16 @@ app.post('/groups/:groupName/followup', async (req, res) => {
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
-  // Send current status
+  // Send current status so UI shows connected/connecting immediately
   socket.emit('clientStatus', {
     isReady: isClientReady,
-    targetPhones: targetPhoneNumbers
+    targetPhones: targetPhoneNumbers,
+    targetPhone: targetPhoneNumbers.length > 0 ? targetPhoneNumbers[0] : null
   });
+  // If already connected, also emit clientReady so UI fully updates (e.g. after page refresh)
+  if (isClientReady) {
+    socket.emit('clientReady', { status: 'connected', message: 'WhatsApp client is ready!', timestamp: new Date().toISOString() });
+  }
 
   // Handle session clear request
   socket.on('clearSession', async () => {
@@ -3769,8 +3830,20 @@ function replaceMessagePlaceholders(message, customer, sendDate = new Date()) {
   const dayOfWeek = sendDate.toLocaleDateString('en-US', { weekday: 'long' });
   replacedMessage = replacedMessage.replace(/<day of the week>/gi, dayOfWeek);
 
-  // Replace <date of month>
-  const dateOfMonth = sendDate.getDate().toString();
+  // Replace <date of month> and shifted variants
+  const baseDate = new Date(sendDate.getTime());
+  const minusOneDate = new Date(sendDate.getTime());
+  minusOneDate.setDate(minusOneDate.getDate() - 1);
+  const minusTwoDate = new Date(sendDate.getTime());
+  minusTwoDate.setDate(minusTwoDate.getDate() - 2);
+
+  const dateOfMonth = baseDate.getDate().toString();
+  const dateOfMonthMinusOne = minusOneDate.getDate().toString();
+  const dateOfMonthMinusTwo = minusTwoDate.getDate().toString();
+
+  // Replace more specific placeholders first
+  replacedMessage = replacedMessage.replace(/<date of month -2>/gi, dateOfMonthMinusTwo);
+  replacedMessage = replacedMessage.replace(/<date of month -1>/gi, dateOfMonthMinusOne);
   replacedMessage = replacedMessage.replace(/<date of month>/gi, dateOfMonth);
 
   // Replace <customer name>
@@ -4687,31 +4760,16 @@ async function initializeWhatsAppClient() {
         }
       }, 2000);
 
-      // Check client state after a short delay and periodically
-      const checkState = async (delay, label) => {
+      // Check client state after a short delay and periodically (session resume often skips 'ready' event)
+      const checkState = (delay, label) => {
         setTimeout(async () => {
+          if (!client) return;
           try {
             const state = await client.getState();
             console.log(`🔍 Client state ${label}:`, state === null ? 'NULL (client not ready)' : state);
-            console.log('🔍 State Check Debug:', {
-              state: state === null ? 'NULL' : state,
-              isClientReady,
-              firstReadyProcessed,
-              firstAuthenticatedProcessed,
-              hasQRCode: !!qrCodeData,
-              authenticatedEventCount,
-              readyEventCount,
-              hasPage: !!client.pupPage,
-              pageUrl: client.pupPage ? (() => { try { return client.pupPage.url(); } catch(e) { return 'unknown'; } })() : 'no page'
-            });
 
             if (state === null) {
               console.error(`❌ ${label}: Client state is NULL - client may not be fully initialized`);
-              console.error('❌ This usually means:');
-              console.error('   1. Browser/page failed to start');
-              console.error('   2. WhatsApp Web failed to load');
-              console.error('   3. Initialization error was silently caught');
-              console.error('❌ Recommendation: Check for browser/Chrome errors');
             } else if (state === 'UNPAIRED' || state === 'UNPAIRED_IDLE') {
               console.warn(`⚠️ Client is ${state} - QR code should be generated or already shown`);
             } else if (state === 'CONNECTED') {
@@ -4723,15 +4781,13 @@ async function initializeWhatsAppClient() {
                 isInitializing = false;
                 client._readyTime = Date.now();
                 console.log('✅ Forced client ready state - WhatsApp is connected and operational');
-                
                 if (io) {
-                  io.emit('clientReady', { 
+                  io.emit('clientReady', {
                     message: 'WhatsApp client is ready!',
                     timestamp: new Date().toISOString(),
                     forced: true
                   });
                 }
-                
                 startKeepAlive();
               } else {
                 console.log(`✅ ${label}: Client is CONNECTED and ready`);
@@ -4741,18 +4797,15 @@ async function initializeWhatsAppClient() {
             } else {
               console.log(`ℹ️ Client state: ${state}`);
             }
-
-            // #region agent log
-            debugLog('server.js:4545', `Client state check ${label}`, { state: state === null ? 'NULL' : state, isClientReady, firstReadyProcessed, firstAuthenticatedProcessed, hasQRCode: !!qrCodeData, hasPage: !!client.pupPage }, 'I');
-            // #endregion
           } catch (stateError) {
             console.error(`❌ Error checking client state ${label}:`, stateError.message);
-            console.error('❌ Error stack:', stateError.stack?.split('\n').slice(0, 3).join('\n'));
           }
         }, delay);
       };
 
-      // Check state at multiple intervals
+      // Check state at multiple intervals (early checks for session resume)
+      checkState(1000, 'after 1 second');
+      checkState(2000, 'after 2 seconds');
       checkState(5000, 'after 5 seconds');
       checkState(15000, 'after 15 seconds');
       checkState(30000, 'after 30 seconds');

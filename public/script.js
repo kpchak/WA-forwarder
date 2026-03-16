@@ -533,6 +533,14 @@ function setupEventListeners() {
     showAllBtn.addEventListener('click', () => filterChats('all'));
     showContactsBtn.addEventListener('click', () => filterChats('contacts'));
     showGroupsBtn.addEventListener('click', () => filterChats('groups'));
+    // Delegated click for add-chat buttons (works for groups and names with special characters)
+    if (chatList) {
+        chatList.addEventListener('click', (e) => {
+            const btn = e.target.closest('.add-chat-btn');
+            if (!btn || !btn.dataset.chatId) return;
+            addChatToSelection(btn.dataset.chatId, btn.dataset.chatName || 'Unknown');
+        });
+    }
     refreshBtn.addEventListener('click', refreshMessages);
     const copyTextBtn = document.getElementById('copyTextBtn');
     if (copyTextBtn) {
@@ -1091,26 +1099,50 @@ function loadAllChats() {
     loadChatsBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
     
     fetch('/chats')
-    .then(response => response.json())
-    .then(data => {
-        if (data.chats) {
-            allChats = data.chats;
-            displayChats(allChats);
-            chatList.style.display = 'block';
-            console.log(`Loaded ${data.totalChats} chats (${data.groups.length} groups, ${data.contacts.length} contacts)`);
-            hideError();
-        } else {
-            showError(data.error || 'Failed to load chats');
+    .then(response => {
+        if (!response.ok) {
+            return response.json()
+                .then(data => {
+                    const msg = data.details ? `${data.error}: ${data.details}` : (data.error || 'Failed to load chats');
+                    showError(msg);
+                    throw new Error(msg);
+                })
+                .catch(err => {
+                    if (err.message && err.message.startsWith('Failed to')) throw err;
+                    showError(response.status === 400 ? 'WhatsApp not ready. Please connect first.' : 'Failed to load chats.');
+                    throw new Error('Fetch chats failed');
+                });
         }
+        return response.json();
+    })
+    .then(data => {
+        if (!data || !data.chats) {
+            showError(data && data.error ? (data.details ? `${data.error}: ${data.details}` : data.error) : 'Failed to load chats');
+            return;
+        }
+        allChats = data.chats;
+        displayChats(allChats);
+        chatList.style.display = 'block';
+        console.log(`Loaded ${data.totalChats} chats (${(data.groups && data.groups.length) || 0} groups, ${(data.contacts && data.contacts.length) || 0} contacts)`);
+        hideError();
     })
     .catch(error => {
-        console.error('Error loading chats:', error);
-        showError('Failed to load chats: ' + error.message);
+        if (error.message && !error.message.startsWith('Failed to')) {
+            console.error('Error loading chats:', error);
+            showError('Failed to load chats: ' + error.message);
+        }
     })
     .finally(() => {
         loadChatsBtn.disabled = false;
         loadChatsBtn.innerHTML = '<i class="fas fa-list"></i> Load All Chats';
     });
+}
+
+function escapeHtml(str) {
+    if (str == null || typeof str !== 'string') return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
 }
 
 function displayChats(chats) {
@@ -1120,24 +1152,32 @@ function displayChats(chats) {
         const chatItem = document.createElement('div');
         chatItem.className = `chat-item ${chat.isGroup ? 'group' : 'contact'}`;
         
-        const lastMessage = chat.lastMessage ? 
-            `${new Date(chat.lastMessage.timestamp * 1000).toLocaleString()}: ${chat.lastMessage.body.substring(0, 50)}${chat.lastMessage.body.length > 50 ? '...' : ''}` : 
-            'No recent messages';
+        const body = (chat.lastMessage && chat.lastMessage.body != null) ? String(chat.lastMessage.body) : '';
+        const timestamp = chat.lastMessage && chat.lastMessage.timestamp != null ? chat.lastMessage.timestamp : 0;
+        const timeStr = timestamp ? new Date(timestamp * 1000).toLocaleString() : 'Unknown';
+        const lastMessage = chat.lastMessage
+            ? `${timeStr}: ${body.substring(0, 50)}${body.length > 50 ? '...' : ''}`
+            : 'No recent messages';
         
-        chatItem.innerHTML = `
-            <div class="chat-info">
-                <div class="chat-name">
-                    <i class="fas ${chat.isGroup ? 'fa-users' : 'fa-user'}"></i>
-                    ${chat.name}
-                    ${chat.isGroup ? '<span class="group-badge">GROUP</span>' : ''}
-                </div>
-                <div class="chat-last-message">${lastMessage}</div>
-                <div class="chat-id">ID: ${chat.id}</div>
+        const chatInfo = document.createElement('div');
+        chatInfo.className = 'chat-info';
+        chatInfo.innerHTML = `
+            <div class="chat-name">
+                <i class="fas ${chat.isGroup ? 'fa-users' : 'fa-user'}"></i>
+                ${escapeHtml(chat.name || 'Unknown')}
+                ${chat.isGroup ? '<span class="group-badge">GROUP</span>' : ''}
             </div>
-            <button class="add-chat-btn" onclick="addChatToSelection('${chat.id}', '${chat.name.replace(/'/g, "\\'")}')">
-                <i class="fas fa-plus"></i>
-            </button>
+            <div class="chat-last-message">${escapeHtml(lastMessage)}</div>
+            <div class="chat-id">ID: ${escapeHtml(chat.id)}</div>
         `;
+        chatItem.appendChild(chatInfo);
+        
+        const addBtn = document.createElement('button');
+        addBtn.className = 'add-chat-btn';
+        addBtn.innerHTML = '<i class="fas fa-plus"></i>';
+        addBtn.dataset.chatId = chat.id;
+        addBtn.dataset.chatName = chat.name || 'Unknown';
+        chatItem.appendChild(addBtn);
         
         chatList.appendChild(chatItem);
     });
@@ -1179,18 +1219,18 @@ function addChatToSelection(chatId, chatName) {
 function setPhoneNumbers() {
     if (currentPhoneNumbers.length === 0) {
         showError('Please add at least one phone number');
-        return;
+        return Promise.reject(new Error('No phone numbers'));
     }
     
     if (!isConnected) {
         showError('WhatsApp client not connected. Please scan QR code first.');
-        return;
+        return Promise.reject(new Error('Not connected'));
     }
     
     console.log('Setting phone numbers:', currentPhoneNumbers);
     
-    // Send phone numbers to server
-    fetch('/set-phone', {
+    // Send phone numbers to server and wait for messages to load
+    return fetch('/set-phone', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -1202,9 +1242,9 @@ function setPhoneNumbers() {
         console.log('Set phones response:', data);
         if (data.success) {
             if (data.clientReady) {
-                // Keep phoneSection visible - messages are now part of it
-                loadMergedMessages();
                 hideError();
+                // Load messages and return the promise so callers can await completion
+                return loadMergedMessages();
             } else {
                 showError('WhatsApp client not ready. Please wait and try again.');
             }
@@ -1215,6 +1255,7 @@ function setPhoneNumbers() {
     .catch(error => {
         console.error('Error setting phone numbers:', error);
         showError('Failed to set phone numbers: ' + error.message);
+        throw error;
     });
 }
 
@@ -1284,7 +1325,7 @@ function loadMergedMessages() {
     console.log('Fetching merged messages for selected phone numbers:', currentPhoneNumbers);
     
     // Use POST to send currentPhoneNumbers to get messages ONLY from selected list
-    fetch(url, {
+    return fetch(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -3108,13 +3149,24 @@ function previewGroupMessage() {
     // Replace placeholders for preview (using example values)
     const now = new Date();
     const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
-    const dateOfMonth = now.getDate().toString();
+
+    const baseDate = new Date(now.getTime());
+    const minusOneDate = new Date(now.getTime());
+    minusOneDate.setDate(minusOneDate.getDate() - 1);
+    const minusTwoDate = new Date(now.getTime());
+    minusTwoDate.setDate(minusTwoDate.getDate() - 2);
+
+    const dateOfMonth = baseDate.getDate().toString();
+    const dateOfMonthMinusOne = minusOneDate.getDate().toString();
+    const dateOfMonthMinusTwo = minusTwoDate.getDate().toString();
     const exampleCustomerName = 'John Doe'; // Example name for preview
     
     let previewMessage = message || 'No text message';
     if (message) {
         previewMessage = message
             .replace(/<day of the week>/gi, dayOfWeek)
+            .replace(/<date of month -2>/gi, dateOfMonthMinusTwo)
+            .replace(/<date of month -1>/gi, dateOfMonthMinusOne)
             .replace(/<date of month>/gi, dateOfMonth)
             .replace(/<customer name>/gi, exampleCustomerName);
     }
@@ -4920,8 +4972,10 @@ function selectCustomerGroup(groupName) {
                     <div class="customer-phone-list" style="max-height: 400px; overflow-y: auto;">
                         ${group.customers.map((customer, index) => {
                             const customerId = `customer_${index}`;
+                            const phone = (customer.phone || '').trim();
+                            const phoneNormalized = phone.includes('@') ? phone : (phone.replace(/\D/g, '') + '@c.us');
                             return `
-                                <div class="customer-phone-item" style="padding: 8px 0; border-bottom: 1px solid #eee;">
+                                <div class="customer-phone-item" style="padding: 8px 0; border-bottom: 1px solid #eee;" data-phone="${phoneNormalized.replace(/"/g, '&quot;')}" data-name="${(customer.name || '').replace(/"/g, '&quot;')}">
                                     <input type="checkbox" id="${customerId}" 
                                            class="customer-checkbox" 
                                            style="margin-right: 10px;" checked>
@@ -4971,23 +5025,30 @@ async function loadSelectedMessages() {
         }
         
         selectedCheckboxes.forEach((checkbox) => {
+            const row = checkbox.closest('.customer-phone-item');
             const label = checkbox.nextElementSibling;
-            if (label) {
-                // Get customer name from the label (strong tag)
+            let phoneNumber = '';
+            let customerName = '';
+
+            if (row && row.dataset.phone) {
+                phoneNumber = (row.dataset.phone || '').trim();
+                customerName = (row.dataset.name || '').trim();
+            }
+            if (!phoneNumber && label) {
                 const nameTag = label.querySelector('strong');
-                const customerName = nameTag ? nameTag.textContent.trim() : '';
-                
-                // Find the span with the phone number (it's now in a separate span)
+                customerName = nameTag ? nameTag.textContent.trim() : '';
                 const phoneSpan = label.querySelector('span');
                 if (phoneSpan) {
                     const phoneText = phoneSpan.textContent.trim();
-                    let phoneNumber = phoneText.replace(/[^0-9]/g, ''); // Remove non-numeric
-                    if (!phoneNumber.endsWith('@c.us')) {
+                    phoneNumber = phoneText.replace(/[^0-9]/g, '');
+                    if (phoneNumber && !phoneNumber.includes('@')) {
                         phoneNumber = phoneNumber + '@c.us';
                     }
-                    allPhoneNumbers.push(phoneNumber);
-                    customerNames.push(customerName || phoneNumber);
                 }
+            }
+            if (phoneNumber) {
+                allPhoneNumbers.push(phoneNumber);
+                customerNames.push(customerName || phoneNumber);
             }
         });
         
@@ -5016,9 +5077,21 @@ async function loadSelectedMessages() {
         updatePhoneList();
         updateSetPhoneButton();
         
-        // Load messages
+        // Load messages and wait for completion
         if (isConnected) {
-            await setPhoneNumbers();
+            try {
+                await setPhoneNumbers();
+                // Switch to Messages section so the user sees the loaded messages (not stuck on Groups view)
+                if (typeof showSection === 'function') {
+                    showSection('messages');
+                } else if (phoneSection) {
+                    phoneSection.style.display = 'block';
+                }
+                if (messagesContainer) messagesContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                showNotification(`Loaded messages from ${customerNames.length} selected customer${customerNames.length !== 1 ? 's' : ''}`, 'success');
+            } catch (err) {
+                showNotification('Failed to load messages. Please try again.', 'error');
+            }
         } else {
             showNotification('WhatsApp not connected. Please wait for connection.', 'warning');
         }

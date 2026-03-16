@@ -5,11 +5,14 @@ node_modules/
 .env
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Cursor debug
+.cursor/
 
 # Session and cache
 .wwebjs_cache/
