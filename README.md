@@ -112,6 +112,20 @@ npm run dev
 2. **Authentication fails**: Try refreshing the page and scanning the QR code again
 3. **Messages not loading**: Ensure the phone number is in international format (+countrycode+number)
 
+### "Could not link device" on Hostinger / VPS
+
+WhatsApp often **blocks or restricts linking** when the app runs on a **cloud server** (Hostinger, AWS, etc.) because the IP is a data-center IP.
+
+**Workaround – link at home, then copy session to the server:**
+
+1. On your **home computer** (same country as your phone): run the app (`npm start`), open the page, and **scan the QR code** with WhatsApp. Wait until it shows "Connected".
+2. **Copy the session folder** from your computer to the server:
+   - On your computer the folder is: `WA-forwarder/.wwebjs_auth`
+   - Copy the **entire** `.wwebjs_auth` folder (with all files inside) to the same directory on the server where `server.js` is (e.g. `/home/wa-forwarder/.wwebjs_auth`).
+   - With Docker: copy into the container’s volume, e.g. the host path you mounted for `-v /srv/wa-forwarder/wwebjs_auth:/app/.wwebjs_auth` (so copy the contents into `/srv/wa-forwarder/wwebjs_auth/` on the server).
+3. **Restart the app** on the server. It should use the saved session and connect without scanning again.  
+   Note: WhatsApp may invalidate the session after some time; if it disconnects, repeat from step 1.
+
 ### Browser Compatibility
 
 - Chrome (recommended)

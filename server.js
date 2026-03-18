@@ -120,8 +120,6 @@ const puppeteerArgs = [
   '--no-first-run',
   '--mute-audio',
   '--hide-scrollbars',
-  '--single-process',
-  '--no-zygote',
 ];
 
 if (isProduction) {
@@ -320,9 +318,9 @@ function scheduleReconnect() {
 
 // Keepalive mechanism to prevent idle disconnections
 function startKeepAlive() {
-  // Clear existing keepalive if any
   if (keepAliveInterval) {
     clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
   }
 
   // Send a keepalive check every 5 minutes to prevent idle disconnection
@@ -352,6 +350,45 @@ function startKeepAlive() {
   }, 5 * 60 * 1000); // Every 5 minutes (increased from 3 to avoid security triggers)
 
   console.log('✅ Keepalive mechanism started (every 5 minutes)');
+}
+
+// Consolidated force-ready – one single path so there are no race conditions
+let forceReadyLock = false;
+function forceClientReady(source) {
+  if (isClientReady && firstReadyProcessed) return;
+  if (forceReadyLock) return;
+  forceReadyLock = true;
+
+  console.log(`⚡ forceClientReady called from: ${source}`);
+  firstReadyProcessed = true;
+  isClientReady = true;
+  isReconnecting = false;
+  isInitializing = false;
+  client._readyTime = Date.now();
+
+  if (authFailureCount > 0) {
+    authFailureCount = 0;
+    lastAuthFailureTime = null;
+  }
+
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+  reconnectAttempts = 0;
+
+  io.emit('clientReady', {
+    message: 'WhatsApp client is ready!',
+    timestamp: new Date().toISOString(),
+    forced: source !== 'ready-event'
+  });
+
+  console.log('⏳ Waiting 60 seconds before starting keepalive...');
+  setTimeout(() => {
+    if (isClientReady) startKeepAlive();
+  }, 60000);
+
+  forceReadyLock = false;
 }
 
 // WhatsApp client events
@@ -432,223 +469,33 @@ client.on('qr', (qr) => {
       });
       io.emit('qrCode', { qrData: qr, qrImage: url });
       console.log('✅ QR code emitted to all clients');
-
-      // Set up monitoring after QR code is shown
-      console.log('🔍 Setting up post-QR monitoring...');
-      const monitorAfterQR = async (delay, label) => {
-        setTimeout(async () => {
-          try {
-            // First check if page is accessible
-            let pageInfo = { accessible: false, url: 'unknown', hasPage: false };
-            try {
-              const page = client.pupPage;
-              if (page) {
-                pageInfo.hasPage = true;
-                try { pageInfo.url = page.url(); } catch (e) { pageInfo.url = 'unknown'; }
-                pageInfo.accessible = true;
-                console.log(`🔍 ${label}: Puppeteer page is accessible, URL: ${pageInfo.url}`);
-              } else {
-                console.warn(`⚠️ ${label}: Puppeteer page is null - client may not be fully initialized`);
-              }
-            } catch (pageErr) {
-              console.warn(`⚠️ ${label}: Could not access Puppeteer page:`, pageErr.message);
-            }
-
-            // Then check state
-            const state = await client.getState();
-            console.log(`🔍 Client state ${label}:`, state === null ? 'NULL (not initialized)' : state);
-            console.log('🔍 Post-QR Debug:', {
-              state: state === null ? 'NULL' : state,
-              isClientReady,
-              firstReadyProcessed,
-              firstAuthenticatedProcessed,
-              authenticatedEventCount,
-              readyEventCount,
-              hasQRCode: !!qrCodeData,
-              pageInfo
-            });
-
-            if (state === null) {
-              console.error(`❌ ${label}: Client state is NULL - critical issue!`);
-              console.error('❌ This means the client is not fully initialized');
-              console.error('❌ Possible causes:');
-              console.error('   1. Browser failed to start');
-              console.error('   2. WhatsApp Web failed to load');
-              console.error('   3. Initialization error was silently caught');
-              console.error('❌ Check browser/Chrome installation and permissions');
-            } else if (state === 'PAIRING') {
-              console.log(`🔄 ${label}: Client is PAIRING - QR code was scanned, waiting for authentication...`);
-            } else if (state === 'CONNECTED') {
-              if (!isClientReady && !firstReadyProcessed) {
-                console.warn(`⚠️ ${label}: Client is CONNECTED but ready event never fired! Forcing ready state...`);
-                firstReadyProcessed = true;
-                isClientReady = true;
-                isReconnecting = false;
-                isInitializing = false;
-                client._readyTime = Date.now();
-                console.log('✅ Forced client ready state - WhatsApp is connected and operational');
-                
-                // Emit ready event to frontend
-                if (io) {
-                  io.emit('clientReady', { 
-                    message: 'WhatsApp client is ready!',
-                    timestamp: new Date().toISOString(),
-                    forced: true
-                  });
-                }
-                
-                // Start keepalive
-                startKeepAlive();
-              } else {
-                console.log(`✅ ${label}: Client is CONNECTED and ready`);
-              }
-            } else if (state === 'UNPAIRED' || state === 'UNPAIRED_IDLE') {
-              console.log(`⚠️ ${label}: Client is ${state} - QR code may have expired`);
-            } else {
-              console.log(`ℹ️ ${label}: Client state: ${state}`);
-            }
-
-            // #region agent log
-            debugLog(`server.js:410-${label}`, `Post-QR state check ${label}`, { state: state === null ? 'NULL' : state, isClientReady, firstReadyProcessed, firstAuthenticatedProcessed, authenticatedEventCount, readyEventCount, pageInfo }, 'I');
-            // #endregion
-          } catch (err) {
-            console.error(`❌ Error in post-QR monitoring ${label}:`, err.message);
-            console.error('❌ Error stack:', err.stack?.split('\n').slice(0, 3).join('\n'));
-          }
-        }, delay);
-      };
-
-      // Monitor at multiple intervals
-      monitorAfterQR(10000, '10 seconds after QR');
-      monitorAfterQR(30000, '30 seconds after QR');
-      monitorAfterQR(60000, '60 seconds after QR');
     } else {
       console.log('⚠️ QR code generated but client is ready - not emitting (likely temporary)');
     }
   });
 });
 
-let readyEventCount = 0; // Track how many times ready event fires
+let readyEventCount = 0;
 let lastReadyTime = null;
-const READY_DEBOUNCE = 10000; // 10 second debounce for ready events - increased to prevent rapid duplicates
-let firstReadyProcessed = false; // Track if first ready event was processed
-let readyProcessingDelay = null; // Track delayed processing timeout
+const READY_DEBOUNCE = 10000;
+let firstReadyProcessed = false;
 
 client.on('ready', () => {
   readyEventCount++;
   const readyTime = Date.now();
 
-  // #region agent log
-  debugLog('server.js:360', 'ready event fired', { eventCount: readyEventCount, isClientReady, firstReadyProcessed, lastReadyTime, timeSinceLast: lastReadyTime ? readyTime - lastReadyTime : null }, 'H');
-  // #endregion
-
-  // CRITICAL: If client is already ready, IGNORE ALL subsequent ready events IMMEDIATELY
-  // This must be the FIRST check - before any logging or processing
-  // This prevents ANY duplicate ready events from being processed, regardless of timing
   if (isClientReady || firstReadyProcessed) {
-    const timeSinceFirst = client._readyTime ? (readyTime - client._readyTime) : 0;
-    console.error(`❌ CRITICAL: Ready event #${readyEventCount} fired but client is already ready!`);
-    console.error(`❌ Time since first ready: ${timeSinceFirst}ms`);
-    console.error('❌ IGNORING this duplicate ready event to prevent LOGOUT');
-    console.error('❌ Processing duplicate ready events triggers WhatsApp security detection');
-    return; // CRITICAL: Ignore ALL ready events if client is already ready
+    console.warn(`⚠️ Duplicate ready event #${readyEventCount} ignored (already ready)`);
+    return;
   }
-
-  // CRITICAL: Debounce ready events - if fired too quickly, ignore duplicates
-  // Check this BEFORE setting flags to catch rapid duplicates
   if (lastReadyTime && (readyTime - lastReadyTime) < READY_DEBOUNCE) {
-    console.error(`❌ CRITICAL: Duplicate ready event detected (${readyTime - lastReadyTime}ms since last)`);
-    console.error(`❌ Ready event #${readyEventCount} fired too quickly - IGNORING to prevent LOGOUT`);
-    console.error('❌ This duplicate ready event would trigger WhatsApp security detection');
-    return; // CRITICAL: Ignore duplicate ready events to prevent LOGOUT
+    console.warn(`⚠️ Ready event #${readyEventCount} debounced (${readyTime - lastReadyTime}ms since last)`);
+    return;
   }
-
-  // CRITICAL: Set flag IMMEDIATELY to prevent any other ready events from being processed
-  // This must be set BEFORE any other processing to prevent race conditions
-  firstReadyProcessed = true;
-  isClientReady = true; // Set immediately to prevent race conditions
   lastReadyTime = readyTime;
 
-  // Store ready time for disconnect analysis
-  client._readyTime = readyTime;
-
-  // CRITICAL: Add a processing delay to allow any duplicate events to fire first
-  // This ensures we only process the first event after a "settling period"
-  // Clear any existing delay
-  if (readyProcessingDelay) {
-    clearTimeout(readyProcessingDelay);
-  }
-
-  // Delay processing by 2 seconds to catch any rapid duplicate events
-  // This prevents processing if another ready event fires within 2 seconds
-  readyProcessingDelay = setTimeout(() => {
-    // Double-check that we're still the first ready event
-    if (!firstReadyProcessed || !isClientReady) {
-      console.log('⚠️ Ready event processing cancelled - duplicate detected during delay');
-      return;
-    }
-
-    // Reset auth failure tracking on successful connection
-    if (authFailureCount > 0) {
-      console.log(`✅ Connection successful - resetting auth failure count (was ${authFailureCount})`);
-      authFailureCount = 0;
-      lastAuthFailureTime = null;
-    }
-
-    console.log(`✅ WhatsApp client is ready! (ready event #${readyEventCount})`);
-    console.log('✅ Session authenticated and connected');
-    console.log('✅ Ready timestamp:', new Date(readyTime).toISOString());
-
-    // Warn if ready event fires multiple times (indicates potential issue)
-    if (readyEventCount > 1) {
-      console.warn(`⚠️ WARNING: Ready event fired ${readyEventCount} times!`);
-      console.warn('⚠️ This might indicate multiple connections or session conflicts');
-      console.warn('⚠️ WhatsApp may detect this as suspicious and log out the session');
-      console.warn('⚠️ Possible causes:');
-      console.warn('   1. Multiple browser tabs/windows connected');
-      console.warn('   2. Server restart triggered while client was initializing');
-      console.warn('   3. Reconnection attempt overlapping with existing connection');
-      console.warn('⚠️ Recommendation: Close other tabs/windows and wait before reconnecting');
-    }
-
-    // Process the ready event (flags already set above to prevent race conditions)
-    isReconnecting = false;
-    isInitializing = false;
-    reconnectAttempts = 0;
-
-    // Clear any pending reconnection attempts
-    if (reconnectTimeout) {
-      clearTimeout(reconnectTimeout);
-      reconnectTimeout = null;
-    }
-
-    // Wait 90 seconds before starting keepalive to avoid triggering security
-    // Increased from 60 to 90 seconds to give WhatsApp more time to settle
-    // This gives WhatsApp time to fully establish the session
-    // Immediate keepalive calls can trigger security detection
-    console.log('⏳ Waiting 90 seconds before starting keepalive (to avoid security triggers)...');
-    setTimeout(() => {
-      if (isClientReady) {
-        console.log('✅ Starting keepalive mechanism (safe to start now)...');
-        startKeepAlive();
-      } else {
-        console.log('⚠️ Client no longer ready, skipping keepalive start');
-      }
-    }, 90 * 1000); // 90 seconds delay - increased to avoid security triggers
-
-    // Log session info for debugging
-    try {
-      const authPath = path.join(__dirname, '.wwebjs_auth');
-      const sessionExists = fs.existsSync(authPath);
-      if (sessionExists) {
-        console.log('✅ Session exists in LocalAuth store');
-      }
-    } catch (error) {
-      // Ignore errors
-    }
-
-    io.emit('clientReady', { status: 'connected', timestamp: readyTime });
-  }, 2000); // 2 second delay to catch rapid duplicate events
+  console.log(`✅ WhatsApp client is ready! (event #${readyEventCount})`);
+  forceClientReady('ready-event');
 });
 
 let authenticatedEventCount = 0;
@@ -700,40 +547,22 @@ client.on('authenticated', () => {
     return; // Ignore duplicate authenticated events
   }
 
-  // Set flag immediately after debounce check
   lastAuthenticatedTime = now;
-  firstAuthenticatedProcessed = true; // Mark that we've processed the first authenticated event
+  firstAuthenticatedProcessed = true;
   console.log(`✅ WhatsApp client authenticated (event #${authenticatedEventCount})`);
 
-  // #region agent log
-  debugLog('server.js:495', 'Authenticated event processed', { eventCount: authenticatedEventCount }, 'E');
-  // #endregion
-
-  // If multiple authenticated events, warn
-  if (authenticatedEventCount > 1) {
-    console.warn(`⚠️ WARNING: Authenticated event fired ${authenticatedEventCount} times!`);
-    console.warn('⚠️ This might cause multiple ready events and trigger WhatsApp security');
-  }
-
-  // Session resume often fires 'authenticated' but not 'ready' - check state after a short delay
+  // Session resume sometimes fires 'authenticated' but never 'ready'.
+  // A single delayed check is enough – forceClientReady guards against duplicates.
   setTimeout(async () => {
     if (!client || isClientReady) return;
     try {
       const state = await client.getState();
       if (state === 'CONNECTED' && !isClientReady && !firstReadyProcessed) {
-        console.warn('⚠️ Authenticated: Client is CONNECTED but ready never fired. Forcing ready...');
-        firstReadyProcessed = true;
-        isClientReady = true;
-        isReconnecting = false;
-        isInitializing = false;
-        client._readyTime = Date.now();
-        if (io) io.emit('clientReady', { message: 'WhatsApp client is ready!', timestamp: new Date().toISOString(), forced: true });
-        startKeepAlive();
+        console.warn('⚠️ Authenticated but ready never fired – forcing ready');
+        forceClientReady('authenticated-fallback');
       }
-    } catch (e) {
-      // ignore
-    }
-  }, 2500);
+    } catch (e) { /* ignore */ }
+  }, 5000);
 });
 
 client.on('auth_failure', (msg) => {
@@ -761,18 +590,18 @@ client.on('auth_failure', (msg) => {
 
   if (isLinkDeviceError) {
     console.error('❌ "Could not link device" error detected!');
-    console.error('❌ This usually means:');
-    console.error('   1. WhatsApp temporarily blocked the connection');
-    console.error('   2. Too many connection attempts in short time');
-    console.error('   3. Phone WhatsApp is not active or connected to internet');
-    console.error('   4. Session conflict (multiple devices trying to connect)');
+    console.error('❌ This often happens when the app runs on a VPS/cloud (e.g. Hostinger):');
+    console.error('   WhatsApp may block or restrict linking from data-center IPs.');
+    console.error('❌ Other causes:');
+    console.error('   1. Too many connection attempts in short time');
+    console.error('   2. Phone WhatsApp is not active or connected to internet');
+    console.error('   3. Session conflict (multiple devices trying to connect)');
     console.error('❌ ========================================');
-    console.error('❌ Recommendations:');
-    console.error('   1. Wait 5-10 minutes before trying again');
-    console.error('   2. Ensure phone WhatsApp is active and connected');
-    console.error('   3. Close other WhatsApp Web sessions');
-    console.error('   4. Check if phone has internet connection');
-    console.error('   5. Restart phone WhatsApp if needed');
+    console.error('❌ Workaround for VPS/cloud:');
+    console.error('   1. On your HOME computer (same network as your phone): run the app, scan QR, link successfully.');
+    console.error('   2. Copy the folder .wwebjs_auth from your computer to the server (same path as server.js).');
+    console.error('   3. Restart the app on the server. It may use the existing session (works until WhatsApp invalidates it).');
+    console.error('❌ Or try: Wait 10+ minutes, use phone on same country, then retry QR once.');
     console.error('❌ ========================================');
 
     // Implement cooldown - don't auto-reconnect immediately
@@ -795,11 +624,10 @@ client.on('auth_failure', (msg) => {
     isLinkDeviceError: isLinkDeviceError,
     failureCount: authFailureCount,
     recommendations: isLinkDeviceError ? [
-      'Wait 5-10 minutes before trying again',
-      'Ensure phone WhatsApp is active and connected',
-      'Close other WhatsApp Web sessions',
-      'Check phone internet connection',
-      'Restart phone WhatsApp if needed'
+      'VPS/cloud: WhatsApp often blocks data-center IPs. Link at home, then copy the .wwebjs_auth folder to the server.',
+      'Wait 10+ minutes and try again (one QR scan only).',
+      'Ensure phone WhatsApp is active, same country, and connected to internet.',
+      'Close other WhatsApp Web sessions and restart the app on the server.'
     ] : []
   });
 });
@@ -827,22 +655,17 @@ client.on('disconnected', (reason) => {
     console.error('❌ ========================================');
   }
 
-  // Reset ready event count and timestamps for next connection
   readyEventCount = 0;
   lastReadyTime = null;
-  firstReadyProcessed = false; // Reset first ready flag
+  firstReadyProcessed = false;
   authenticatedEventCount = 0;
   lastAuthenticatedTime = null;
-  firstAuthenticatedProcessed = false; // Reset authenticated flag
-
-  // Clear any pending ready processing delay
-  if (readyProcessingDelay) {
-    clearTimeout(readyProcessingDelay);
-    readyProcessingDelay = null;
-  }
+  firstAuthenticatedProcessed = false;
+  forceReadyLock = false;
 
   isClientReady = false;
-  isInitializing = false; // Reset initialization flag
+  isInitializing = false;
+  clientInitialized = false; // allow re-initialization after disconnect
 
   // Clear keepalive interval
   if (keepAliveInterval) {
@@ -4608,11 +4431,6 @@ async function gracefulShutdown(signal) {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
-  if (readyProcessingDelay) {
-    clearTimeout(readyProcessingDelay);
-    readyProcessingDelay = null;
-  }
-
   // Destroy client if it exists
   if (client && typeof client.destroy === 'function') {
     try {
@@ -4760,55 +4578,25 @@ async function initializeWhatsAppClient() {
         }
       }, 2000);
 
-      // Check client state after a short delay and periodically (session resume often skips 'ready' event)
-      const checkState = (delay, label) => {
+      // Fallback: if 'ready' event never fires but state becomes CONNECTED, force ready.
+      // Two checks are enough – 10 s and 30 s after init resolves.
+      const checkStateFallback = (delay, label) => {
         setTimeout(async () => {
-          if (!client) return;
+          if (!client || isClientReady) return;
           try {
             const state = await client.getState();
-            console.log(`🔍 Client state ${label}:`, state === null ? 'NULL (client not ready)' : state);
-
-            if (state === null) {
-              console.error(`❌ ${label}: Client state is NULL - client may not be fully initialized`);
-            } else if (state === 'UNPAIRED' || state === 'UNPAIRED_IDLE') {
-              console.warn(`⚠️ Client is ${state} - QR code should be generated or already shown`);
-            } else if (state === 'CONNECTED') {
-              if (!isClientReady && !firstReadyProcessed) {
-                console.warn(`⚠️ ${label}: Client is CONNECTED but ready event never fired! Forcing ready state...`);
-                firstReadyProcessed = true;
-                isClientReady = true;
-                isReconnecting = false;
-                isInitializing = false;
-                client._readyTime = Date.now();
-                console.log('✅ Forced client ready state - WhatsApp is connected and operational');
-                if (io) {
-                  io.emit('clientReady', {
-                    message: 'WhatsApp client is ready!',
-                    timestamp: new Date().toISOString(),
-                    forced: true
-                  });
-                }
-                startKeepAlive();
-              } else {
-                console.log(`✅ ${label}: Client is CONNECTED and ready`);
-              }
-            } else if (state === 'PAIRING') {
-              console.log('🔄 Client is PAIRING - QR code was scanned, waiting for authentication...');
-            } else {
-              console.log(`ℹ️ Client state: ${state}`);
+            console.log(`🔍 ${label}: state=${state || 'NULL'}`);
+            if (state === 'CONNECTED' && !isClientReady && !firstReadyProcessed) {
+              console.warn(`⚠️ ${label}: CONNECTED but ready never fired – forcing ready`);
+              forceClientReady(label);
             }
-          } catch (stateError) {
-            console.error(`❌ Error checking client state ${label}:`, stateError.message);
+          } catch (e) {
+            console.warn(`⚠️ ${label}: state check error – ${e.message}`);
           }
         }, delay);
       };
-
-      // Check state at multiple intervals (early checks for session resume)
-      checkState(1000, 'after 1 second');
-      checkState(2000, 'after 2 seconds');
-      checkState(5000, 'after 5 seconds');
-      checkState(15000, 'after 15 seconds');
-      checkState(30000, 'after 30 seconds');
+      checkStateFallback(10000, 'init+10s');
+      checkStateFallback(30000, 'init+30s');
 
       // #region agent log
       debugLog('server.js:4520', 'client.initialize() resolved', { sessionExists }, 'A');

@@ -50,6 +50,9 @@ const groupMediaInput = document.getElementById('groupMediaInput');
 const sendGroupMessageBtn = document.getElementById('sendGroupMessageBtn');
 const previewGroupBtn = document.getElementById('previewGroupBtn');
 const clearMessageBtn = document.getElementById('clearMessageBtn');
+const saveDraftBtn = document.getElementById('saveDraftBtn');
+const loadDraftSelect = document.getElementById('loadDraftSelect');
+const deleteDraftBtn = document.getElementById('deleteDraftBtn');
 const scheduleEditStatus = document.getElementById('scheduleEditStatus');
 const groupMessageResults = document.getElementById('groupMessageResults');
 const recipientsList = document.getElementById('recipientsList');
@@ -609,6 +612,48 @@ function setupEventListeners() {
         });
     }
 
+    if (saveDraftBtn) {
+        saveDraftBtn.addEventListener('click', () => {
+            const message = groupMessageInput ? groupMessageInput.value.trim() : '';
+            const mediaUrl = groupMediaInput ? groupMediaInput.value.trim() : '';
+            if (!message && !mediaUrl) {
+                showNotification('Enter a message or media URL to save as draft', 'error');
+                return;
+            }
+            const title = window.prompt('Draft name (optional):', 'Draft ' + new Date().toLocaleDateString());
+            if (title === null) return;
+            const drafts = getDrafts();
+            const draft = {
+                id: 'draft_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
+                title: (title || '').trim() || 'Untitled',
+                message: message,
+                mediaUrl: mediaUrl,
+                savedAt: new Date().toISOString()
+            };
+            drafts.unshift(draft);
+            saveDraftsToList(drafts);
+            refreshDraftsSelect();
+            loadDraftSelect.value = draft.id;
+            if (deleteDraftBtn) deleteDraftBtn.style.display = 'inline-block';
+            showNotification('Draft saved', 'success');
+        });
+    }
+    if (loadDraftSelect) {
+        loadDraftSelect.addEventListener('change', () => {
+            const id = loadDraftSelect.value;
+            if (!id) return;
+            loadDraftIntoForm(id);
+        });
+    }
+    if (deleteDraftBtn) {
+        deleteDraftBtn.addEventListener('click', () => {
+            const id = loadDraftSelect ? loadDraftSelect.value : '';
+            if (!id) return;
+            deleteDraftById(id);
+        });
+    }
+    refreshDraftsSelect();
+
     if (showScheduleBtn) {
         showScheduleBtn.addEventListener('click', () => setScheduleVisibility(true));
     }
@@ -921,41 +966,33 @@ socket.on('clientReady', function(data) {
 
 socket.on('authFailure', function(data) {
     console.error('❌ Authentication failed:', data.message);
-    
-    // Check if this is a "link device" error
+
     if (data.isLinkDeviceError) {
-        console.error('❌ "Could not link device" error detected');
-        console.error('❌ This usually means WhatsApp temporarily blocked the connection');
-        
-        // Show detailed error message to user
-        let errorMessage = '❌ Could not link device. Please try again later.\n\n';
-        errorMessage += 'This usually happens when:\n';
-        errorMessage += '• Too many connection attempts\n';
-        errorMessage += '• Phone WhatsApp is not active\n';
-        errorMessage += '• Multiple devices trying to connect\n\n';
-        
+        console.error('❌ "Could not link device" – often due to VPS/data-center IP blocking');
+
+        let shortMsg = 'Could not link device. On VPS/Hostinger, WhatsApp often blocks data-center IPs. ';
+        shortMsg += 'Workaround: link on your home PC, then copy the .wwebjs_auth folder to the server and restart.';
+        showNotification(shortMsg, 'error', 20000);
+
+        let fullError = 'Could not link device\n\n';
+        fullError += 'On VPS/cloud (e.g. Hostinger), WhatsApp may block linking from server IPs.\n\n';
+        fullError += 'Workaround:\n';
+        fullError += '1. On your home computer: run this app, scan QR, link successfully.\n';
+        fullError += '2. Copy the .wwebjs_auth folder to the server (same directory as server.js).\n';
+        fullError += '3. Restart the app on the server. It will use the saved session.\n\n';
         if (data.recommendations && data.recommendations.length > 0) {
-            errorMessage += 'Recommendations:\n';
-            data.recommendations.forEach((rec, idx) => {
-                errorMessage += `${idx + 1}. ${rec}\n`;
-            });
+            data.recommendations.forEach(function(rec) { fullError += '• ' + rec + '\n'; });
         }
-        
         if (data.failureCount >= 3) {
-            errorMessage += '\n⚠️ Multiple failures detected. Please wait 5-10 minutes before trying again.';
+            fullError += '\nWait 10+ minutes before trying again.';
         }
-        
-        showNotification(errorMessage, 'error', 15000); // Show for 15 seconds
-        
-        // Update status
-        updateStatus('error', 'Connection Failed - Wait before retrying');
+        showError(fullError);
+        updateStatus('error', 'Link failed – see workaround above');
     } else {
-        // Generic auth failure
         showNotification('Authentication failed: ' + (data.message || 'Unknown error'), 'error');
+        showError('Authentication failed: ' + (data.message || 'Unknown error'));
         updateStatus('error', 'Authentication Failed');
     }
-    console.error('Authentication failed:', data.message);
-    showError('Authentication failed: ' + data.message);
 });
 
 socket.on('clientDisconnected', function(data) {
@@ -3203,6 +3240,60 @@ function previewGroupMessage() {
             document.body.removeChild(preview);
         }
     });
+}
+
+// ── Message drafts (saved in browser, not sent to WhatsApp) ──
+const DRAFTS_STORAGE_KEY = 'waForwarderDrafts';
+
+function getDrafts() {
+    try {
+        const raw = localStorage.getItem(DRAFTS_STORAGE_KEY);
+        const list = raw ? JSON.parse(raw) : [];
+        return Array.isArray(list) ? list : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveDraftsToList(list) {
+    try {
+        localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(list));
+    } catch (e) {
+        console.warn('Could not save drafts', e);
+    }
+}
+
+function refreshDraftsSelect() {
+    if (!loadDraftSelect) return;
+    const drafts = getDrafts();
+    const current = loadDraftSelect.value;
+    loadDraftSelect.innerHTML = '<option value="">— Choose draft —</option>';
+    drafts.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = (d.title || 'Untitled') + ' (' + (d.savedAt ? new Date(d.savedAt).toLocaleString() : '') + ')';
+        loadDraftSelect.appendChild(opt);
+    });
+    if (current && drafts.some(d => d.id === current)) loadDraftSelect.value = current;
+    if (deleteDraftBtn) deleteDraftBtn.style.display = loadDraftSelect.value ? 'inline-block' : 'none';
+}
+
+function loadDraftIntoForm(draftId) {
+    const drafts = getDrafts();
+    const draft = drafts.find(d => d.id === draftId);
+    if (!draft) return;
+    if (groupMessageInput) groupMessageInput.value = draft.message || '';
+    if (groupMediaInput) groupMediaInput.value = draft.mediaUrl || '';
+    showNotification('Draft loaded', 'info');
+}
+
+function deleteDraftById(draftId) {
+    const drafts = getDrafts().filter(d => d.id !== draftId);
+    saveDraftsToList(drafts);
+    refreshDraftsSelect();
+    if (loadDraftSelect) loadDraftSelect.value = '';
+    if (deleteDraftBtn) deleteDraftBtn.style.display = 'none';
+    showNotification('Draft deleted', 'info');
 }
 
 function initializeScheduleDefaults() {
