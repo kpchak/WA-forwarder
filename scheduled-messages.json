@@ -31,5 +31,32 @@
     "nextRun": null,
     "status": "completed",
     "lastError": null
+  },
+  {
+    "id": "sched_1773676464375_9hrtdw",
+    "groupName": "Test",
+    "message": "schedule message",
+    "mediaUrl": "",
+    "mediaType": null,
+    "mediaFilename": null,
+    "hasMedia": false,
+    "targetScope": "selected",
+    "selectedPhones": [
+      "919360487516"
+    ],
+    "recurrenceType": "once",
+    "weekdays": [],
+    "monthlyDay": null,
+    "startDate": "2026-03-16",
+    "startTime": "21:28",
+    "endDate": "2026-03-16",
+    "endTime": "21:28",
+    "timezone": "Asia/Calcutta",
+    "createdAt": "2026-03-16T15:54:24.375Z",
+    "updatedAt": null,
+    "lastRunAt": "2026-03-16T15:58:25.862Z",
+    "nextRun": null,
+    "status": "completed",
+    "lastError": null
   }
 ]

@@ -16,7 +16,6 @@ yarn-error.log*
 
 # Session and cache
 .wwebjs_cache/
-.wwebjs_auth/
 session/
 temp/
 
@@ -43,4 +42,5 @@ build/
 
 # Archives (e.g. client zips)
 *.zip
+*.tar.gz
 RemoteAuth-whatsapp-forwarder-client.zip

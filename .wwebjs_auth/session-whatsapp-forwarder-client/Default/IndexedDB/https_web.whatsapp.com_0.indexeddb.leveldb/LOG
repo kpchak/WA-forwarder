@@ -1,0 +1,57 @@
+2026/01/24-05:58:09.225 732c Reusing MANIFEST D:\web application\MMCRM\WA-forwarder\.wwebjs_auth\session-whatsapp-forwarder-client\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/01/24-05:58:09.226 732c Recovering log #3360
+2026/01/24-05:58:09.275 732c Reusing old log D:\web application\MMCRM\WA-forwarder\.wwebjs_auth\session-whatsapp-forwarder-client\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/003360.log 
+2026/01/24-05:58:10.698 4960 Level-0 table #3381: started
+2026/01/24-05:58:10.703 4960 Level-0 table #3381: 497899 bytes OK
+2026/01/24-05:58:10.704 4960 Delete type=0 #3360
+2026/01/24-05:58:10.704 8098 Manual compaction at level-0 from '\x00\x1d\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x1e\x00\x00\x00' @ 0 : 0; will stop at '\x00\x1d\x00\x00\x05' @ 8455556 : 1
+2026/01/24-05:58:10.704 8098 Compacting 1@0 + 1@1 files
+2026/01/24-05:58:10.715 8098 Generated table #3382@0: 10573 keys, 200063 bytes
+2026/01/24-05:58:10.716 8098 Generated table #3383@0: 142 keys, 60827 bytes
+2026/01/24-05:58:10.717 8098 Generated table #3384@0: 224 keys, 26985 bytes
+2026/01/24-05:58:10.717 8098 Compacted 1@0 + 1@1 files => 287875 bytes
+2026/01/24-05:58:10.717 8098 compacted to: files[ 0 3 47 0 0 0 0 ]
+2026/01/24-05:58:10.718 8098 Delete type=2 #3381
+2026/01/24-05:58:10.718 8098 Manual compaction at level-0 from '\x00\x1d\x00\x00\x05' @ 8455556 : 1 .. '\x00\x1e\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/01/24-05:58:10.757 8098 Compacting 1@1 + 10@2 files
+2026/01/24-05:58:10.769 8098 Generated table #3385@1: 1312 keys, 2138003 bytes
+2026/01/24-05:58:10.781 8098 Generated table #3386@1: 1696 keys, 2132835 bytes
+2026/01/24-05:58:10.796 8098 Generated table #3387@1: 5949 keys, 2142304 bytes
+2026/01/24-05:58:10.846 8098 Generated table #3388@1: 29826 keys, 2262998 bytes
+2026/01/24-05:58:10.895 8098 Generated table #3389@1: 24657 keys, 2277747 bytes
+2026/01/24-05:58:10.936 8098 Generated table #3390@1: 23466 keys, 2236830 bytes
+2026/01/24-05:58:10.978 8098 Generated table #3391@1: 36792 keys, 2204719 bytes
+2026/01/24-05:58:11.022 8098 Generated table #3392@1: 22079 keys, 2291303 bytes
+2026/01/24-05:58:11.046 8098 Generated table #3393@1: 9237 keys, 2208757 bytes
+2026/01/24-05:58:11.064 8098 Generated table #3394@1: 7848 keys, 2143557 bytes
+2026/01/24-05:58:11.065 8098 Generated table #3395@1: 67 keys, 51164 bytes
+2026/01/24-05:58:11.065 8098 Compacted 1@1 + 10@2 files => 22090217 bytes
+2026/01/24-05:58:11.065 8098 compacted to: files[ 0 2 48 0 0 0 0 ]
+2026/01/24-05:58:11.066 8098 Delete type=2 #3327
+2026/01/24-05:58:11.066 8098 Delete type=2 #3328
+2026/01/24-05:58:11.066 8098 Delete type=2 #3329
+2026/01/24-05:58:11.066 8098 Delete type=2 #3330
+2026/01/24-05:58:11.066 8098 Delete type=2 #3331
+2026/01/24-05:58:11.066 8098 Delete type=2 #3364
+2026/01/24-05:58:11.066 8098 Delete type=2 #3373
+2026/01/24-05:58:11.066 8098 Delete type=2 #3374
+2026/01/24-05:58:11.066 8098 Delete type=2 #3375
+2026/01/24-05:58:11.066 8098 Delete type=2 #3376
+2026/01/24-05:58:11.066 8098 Delete type=2 #3377
+2026/01/24-05:58:11.066 8098 Delete type=2 #3383
+2026/01/24-05:58:11.147 8098 Compacting 1@1 + 6@2 files
+2026/01/24-05:58:11.206 8098 Generated table #3396@1: 90051 keys, 2240499 bytes
+2026/01/24-05:58:11.244 8098 Generated table #3397@1: 40098 keys, 2213118 bytes
+2026/01/24-05:58:11.278 8098 Generated table #3398@1: 25836 keys, 2184550 bytes
+2026/01/24-05:58:11.328 8098 Generated table #3399@1: 56564 keys, 2214463 bytes
+2026/01/24-05:58:11.384 8098 Generated table #3400@1: 63459 keys, 2230589 bytes
+2026/01/24-05:58:11.426 8098 Generated table #3401@1: 45301 keys, 2176560 bytes
+2026/01/24-05:58:11.426 8098 Compacted 1@1 + 6@2 files => 13259779 bytes
+2026/01/24-05:58:11.427 8098 compacted to: files[ 0 1 48 0 0 0 0 ]
+2026/01/24-05:58:11.427 8098 Delete type=2 #3365
+2026/01/24-05:58:11.427 8098 Delete type=2 #3366
+2026/01/24-05:58:11.427 8098 Delete type=2 #3367
+2026/01/24-05:58:11.427 8098 Delete type=2 #3368
+2026/01/24-05:58:11.427 8098 Delete type=2 #3369
+2026/01/24-05:58:11.427 8098 Delete type=2 #3370
+2026/01/24-05:58:11.427 8098 Delete type=2 #3382
