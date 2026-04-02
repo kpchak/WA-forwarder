@@ -1,0 +1,31 @@
+# WA-forwarder — Docker Compose (Hostinger VPS / any Linux amd64 host)
+#
+# Before first run on the server:
+#   cp .env.example .env   # then edit .env
+#   mkdir -p wwebjs_auth logs
+#   # Copy WhatsApp session from your PC into ./wwebjs_auth/ (see README)
+#
+# Start:  docker compose up -d --build
+# Logs:   docker compose logs -f
+# Stop:   docker compose down
+
+services:
+  wa-forwarder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wa-forwarder:latest
+    container_name: wa-forwarder
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOSTINGER: "true"
+      PORT: "3000"
+    volumes:
+      # Persist WhatsApp session + logs on the host (survives rebuilds)
+      - ./wwebjs_auth:/app/.wwebjs_auth
+      - ./logs:/app/logs

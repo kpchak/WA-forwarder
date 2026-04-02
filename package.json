@@ -14,7 +14,11 @@
     "pm2:stop": "pm2 stop wa-forwarder",
     "pm2:restart": "pm2 restart wa-forwarder",
     "pm2:logs": "pm2 logs wa-forwarder",
-    "pm2:monit": "pm2 monit"
+    "pm2:monit": "pm2 monit",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
   },
   "dependencies": {
     "cors": "^2.8.5",

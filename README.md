@@ -133,6 +133,30 @@ WhatsApp often **blocks or restricts linking** when the app runs on a **cloud se
 - Safari
 - Edge
 
+### Docker on Hostinger VPS
+
+The repo includes a **`Dockerfile`** and **`docker-compose.yml`**. Use a **VPS with Docker** (amd64). Shared web hosting without Docker is not suitable for this app.
+
+**On the server (SSH), one-time setup:**
+
+1. Install Docker and the Compose plugin (Hostinger docs or `apt install docker.io docker-compose-plugin`).
+2. Put the project on the server, e.g. clone to `/srv/wa-forwarder` and `cd` there.
+3. `cp .env.example .env` and fill in values (Google Sheets, etc.).
+4. `mkdir -p wwebjs_auth logs`
+5. Copy your linked WhatsApp session from your PC into **`wwebjs_auth/`** on the server (same files as `.wwebjs_auth` on your computer — see *Could not link device* above). Point Nginx or a reverse proxy at port **3000** if you use a domain.
+
+**Run / update:**
+
+```bash
+cd /srv/wa-forwarder
+docker compose up -d --build
+docker compose logs -f
+```
+
+To publish on another host port (e.g. 8080): `HOST_PORT=8080 docker compose up -d --build`
+
+**Note:** The image targets **amd64** (Google Chrome in Dockerfile). ARM VPS images need a different Chrome/Chromium setup.
+
 ## 🚀 Want to Host Online?
 
 See **[Railway Deployment Guide](RAILWAY_DEPLOYMENT.md)** for step-by-step instructions to deploy to Railway (free tier available).
