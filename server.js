@@ -52,6 +52,8 @@ function debugLog(location, message, data, hypothesisId) {
 }
 
 const app = express();
+// Behind Nginx / Nginx Proxy Manager: correct client IP + rate-limit + X-Forwarded-For
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
