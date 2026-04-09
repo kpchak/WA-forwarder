@@ -134,12 +134,20 @@ if (isProduction) {
   );
 }
 
+// Pin WhatsApp Web to an archived HTML build (wppconnect-team/wa-version) so live web.whatsapp.com
+// cannot drift ahead of whatsapp-web.js (fixes fetchMessages / waitForChatLoading-style failures).
+// Override with WWEBJS_WEB_VERSION when wppconnect adds a newer compatible build.
+const WWEBJS_WEB_VERSION = process.env.WWEBJS_WEB_VERSION || '2.3000.1036930770-alpha';
+
 const client = new Client({
   authStrategy: new LocalAuth({
     dataPath: path.join(__dirname, '.wwebjs_auth')
   }),
+  webVersion: WWEBJS_WEB_VERSION,
   webVersionCache: {
-    type: 'none'
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html',
+    strict: false
   },
   puppeteer: {
     headless: true,
