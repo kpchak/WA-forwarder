@@ -220,6 +220,15 @@ const GOOGLE_SHEETS_CONFIG = {
   ]
 };
 
+function isGoogleSheetsConfigured() {
+  const email = String(GOOGLE_SHEETS_CONFIG.credentials.client_email || '').trim();
+  const key = String(GOOGLE_SHEETS_CONFIG.credentials.private_key || '').trim();
+  const sid = String(GOOGLE_SHEETS_CONFIG.spreadsheetId || '').trim();
+  return Boolean(email && key && sid);
+}
+
+let googleSheetsMissingEnvLogged = false;
+
 // Customer groups storage
 let customerGroups = {};
 let attendanceData = {}; // Format: { "groupName": { "customerPhone": { "YYYY-MM": [{dates}, ...] } } }
@@ -4092,6 +4101,9 @@ async function recordCodeConfirmation(groupName, customerPhone, message = '', me
 
 async function initializeGoogleSheets() {
   try {
+    if (!isGoogleSheetsConfigured()) {
+      return null;
+    }
     const auth = new google.auth.GoogleAuth({
       credentials: GOOGLE_SHEETS_CONFIG.credentials,
       scopes: GOOGLE_SHEETS_CONFIG.scopes
@@ -4116,10 +4128,18 @@ async function loadCustomerGroups(forceRefresh = false) {
 
     const sheets = await initializeGoogleSheets();
     if (!sheets) {
-      console.log('Google Sheets not configured');
+      if (!googleSheetsMissingEnvLogged) {
+        googleSheetsMissingEnvLogged = true;
+        if (!isGoogleSheetsConfigured()) {
+          console.log(
+            'Google Sheets: not configured (set GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY, GOOGLE_SPREADSHEET_ID in server .env and restart). Customer groups disabled.'
+          );
+        } else {
+          console.log('Google Sheets: initialization failed; customer groups unavailable.');
+        }
+      }
       // Return cached data if available, even if Sheets not configured
       if (customerGroupsCache) {
-        console.log('⚠️ Google Sheets not configured, returning cached data');
         return customerGroupsCache;
       }
       return {};
