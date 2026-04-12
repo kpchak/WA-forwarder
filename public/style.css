@@ -170,6 +170,80 @@ header p {
     color: #dc3545;
 }
 
+.session-tools-card {
+    margin-bottom: 24px;
+    padding: 16px 18px;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid #dee2e6;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.session-tools-title {
+    margin: 0 0 12px 0;
+    font-size: 1.05rem;
+    color: #333;
+    font-weight: 600;
+}
+
+.session-tools-disabled-msg {
+    margin: 0;
+    padding: 10px 12px;
+    background: #fff8e6;
+    border: 1px solid #ffc107;
+    border-radius: 6px;
+    color: #856404;
+    font-size: 0.9rem;
+}
+
+.session-tools-key-row {
+    margin-bottom: 12px;
+    text-align: left;
+    max-width: 320px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.session-tools-label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 6px;
+}
+
+.session-tools-key-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+.session-tools-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+.session-tools-footnote {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #6c757d;
+    line-height: 1.45;
+    text-align: left;
+}
+
+.session-tools-footnote code {
+    font-size: 0.85em;
+    background: #f1f3f5;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
 .qr-section {
     text-align: center;
     margin-bottom: 30px;

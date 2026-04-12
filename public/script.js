@@ -96,6 +96,48 @@ let presetButtons;
 let isConnected = false;
 let currentGroups = {};
 let selectedGroup = null;
+
+/** Default server window for merged load when no time/hours filter is applied (matches Sheets-style ranges). */
+const DEFAULT_MERGED_DAYS = 30;
+
+/** Bump together with `script.js?v=` in index.html (cache bust). */
+const UI_SCRIPT_BUILD = 22;
+console.info(`[WA-forwarder] UI build ${UI_SCRIPT_BUILD} · groups/attendance trace: filter console by [GROUPS_TRACE]`);
+
+/** Filter browser console by `[GROUPS_TRACE]` to follow group load + attendance resolution. */
+const GROUPS_TRACE_PREFIX = '[GROUPS_TRACE]';
+function groupsTrace(phase, data = {}) {
+    console.log(`${GROUPS_TRACE_PREFIX} ${phase}`, { t: new Date().toISOString(), phase, ...data });
+}
+
+function summarizeCurrentGroupsForTrace() {
+    const keys = Object.keys(currentGroups);
+    const perGroup = {};
+    for (const g of keys) {
+        const customers = currentGroups[g]?.customers;
+        const list = Array.isArray(customers) ? customers : [];
+        perGroup[g] = { customerCount: list.length };
+    }
+    return { groupCount: keys.length, groupNames: keys, perGroup };
+}
+
+function normalizePhoneDigits(phone) {
+    return String(phone || '').replace(/\D/g, '');
+}
+
+/** Server may send digits-only senderPhone (e.g. after @lid → chat phone fix). */
+function attendanceDigitsFromSenderPhone(senderPhone) {
+    if (!senderPhone || senderPhone === 'Me') return '';
+    return normalizePhoneDigits(senderPhone);
+}
+
+/** Console: `dumpGroupsTrace()` for a one-line snapshot of `currentGroups` + `selectedGroup`. */
+function dumpGroupsTrace() {
+    const s = summarizeCurrentGroupsForTrace();
+    groupsTrace('dumpGroupsTrace', { ...s, selectedGroup });
+    return s;
+}
+window.dumpGroupsTrace = dumpGroupsTrace;
 let currentPhoneNumbers = [];
 let allChats = [];
 let currentFilter = 'all';
@@ -436,7 +478,104 @@ function showCustomerGroupsForForwarding(mediaData) {
   showNotification(`Media ready for forwarding: ${mediaData.mediaFilename}`, 'success');
   
   // Store the media data globally for the forwarding process
-  window.currentForwardingMedia = mediaData;
+    window.currentForwardingMedia = mediaData;
+}
+
+async function initSessionToolsUI() {
+    const card = document.getElementById('sessionToolsCard');
+    const disabledMsg = document.getElementById('sessionToolsDisabledMsg');
+    const actions = document.getElementById('sessionToolsActions');
+    const keyRow = document.getElementById('sessionToolsKeyRow');
+    const adminKeyInput = document.getElementById('sessionToolsAdminKey');
+    const clearCacheBtn = document.getElementById('clearCacheBtn');
+    const clearSessionBtn = document.getElementById('clearSessionBtn');
+    if (!card || !actions || !disabledMsg || !keyRow || !clearCacheBtn || !clearSessionBtn) return;
+
+    let cfg = { enabled: true, adminKeyRequired: false };
+    try {
+        const r = await fetch('/api/whatsapp/session-tools-config');
+        if (r.ok) cfg = await r.json();
+    } catch (e) {
+        console.warn('session-tools-config:', e);
+    }
+
+    if (!cfg.enabled) {
+        disabledMsg.textContent = 'This server runs in production. Add ADMIN_SECRET to .env on the server to enable Clear session and Clear cache from the browser.';
+        disabledMsg.style.display = 'block';
+        actions.style.display = 'none';
+        syncSessionToolsCardForActiveTab();
+        return;
+    }
+
+    disabledMsg.style.display = 'none';
+    actions.style.display = 'block';
+    keyRow.style.display = cfg.adminKeyRequired ? 'block' : 'none';
+
+    function buildBody() {
+        const body = { confirm: true };
+        if (cfg.adminKeyRequired) {
+            const k = adminKeyInput && adminKeyInput.value ? adminKeyInput.value.trim() : '';
+            if (!k) {
+                showNotification('Enter the admin key (same as ADMIN_SECRET on the server).', 'error');
+                return null;
+            }
+            body.adminSecret = k;
+        }
+        return body;
+    }
+
+    clearCacheBtn.addEventListener('click', async function () {
+        if (!confirm('Clear WhatsApp web cache on the server (.wwebjs_cache, temp) and reset the in-memory Google Sheets cache?')) return;
+        const body = buildBody();
+        if (!body) return;
+        clearCacheBtn.disabled = true;
+        try {
+            const r = await fetch('/api/whatsapp/clear-cache', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                showNotification(data.error || 'Clear cache failed', 'error');
+                return;
+            }
+            showNotification(data.message || 'Cache cleared.', 'success');
+        } catch (e) {
+            showNotification('Clear cache failed: ' + (e.message || String(e)), 'error');
+        } finally {
+            clearCacheBtn.disabled = false;
+        }
+    });
+
+    clearSessionBtn.addEventListener('click', async function () {
+        if (!confirm('This will log out WhatsApp, delete the saved session on the server, and show a new QR code. Continue?')) return;
+        const body = buildBody();
+        if (!body) return;
+        clearSessionBtn.disabled = true;
+        try {
+            const r = await fetch('/api/whatsapp/clear-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                showNotification(data.error || 'Clear session failed', 'error');
+                return;
+            }
+            showNotification(data.message || 'Session cleared. Wait for the QR code.', 'success');
+            updateStatus('connecting', 'Reconnecting…');
+            qrSection.style.display = 'block';
+            phoneSection.style.display = 'none';
+        } catch (e) {
+            showNotification('Clear session failed: ' + (e.message || String(e)), 'error');
+        } finally {
+            clearSessionBtn.disabled = false;
+        }
+    });
+
+    syncSessionToolsCardForActiveTab();
 }
 
 // Initialize
@@ -477,9 +616,12 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('🔧 Elements initialized, setting up event listeners...');
     setupEventListeners();
     console.log('🔧 Event listeners set up, checking socket connection...');
+
+    initSessionToolsUI();
     
     // Auto-load customer groups when app starts (with small delay to ensure socket is ready)
     console.log('🔧 Auto-loading customer groups...');
+    groupsTrace('init:autoLoadScheduled', { delayMs: 1000, source: 'DOMContentLoaded setTimeout' });
     setTimeout(() => {
         loadCustomerGroups();
         showNotification('Loading customer groups automatically...', 'info');
@@ -588,6 +730,7 @@ function setupEventListeners() {
         clearTimeout(clickTimeout);
         clickTimeout = setTimeout(() => {
             // Single click - load from cache
+            groupsTrace('ui:loadGroupsBtn:click', { forceRefresh: false });
             loadCustomerGroups(false);
         }, 300);
     });
@@ -596,6 +739,7 @@ function setupEventListeners() {
         e.preventDefault();
         clearTimeout(clickTimeout);
         // Double click - force refresh
+        groupsTrace('ui:loadGroupsBtn:dblclick', { forceRefresh: true });
         showNotification('Refreshing groups from Google Sheets...', 'info');
         loadCustomerGroups(true);
     });
@@ -890,19 +1034,13 @@ socket.on('qrCode', function(data) {
     console.log('📱 QR Code received');
     qrCodeData = data.qrImage; // Store QR code data
     
-    // Only show QR code if client is not already connected
-    // This prevents showing QR when client temporarily disconnects but has valid session
-    if (!isConnected) {
-        console.log('⚠️ Client not connected, showing QR code');
-        displayQRCode(data.qrImage);
-        updateStatus('connecting', 'Scan QR Code to connect');
-        qrSection.style.display = 'block';
-        phoneSection.style.display = 'none';
-    } else {
-        console.log('✅ Client already connected, ignoring QR code');
-        // Client is connected, don't show QR code
-        return;
-    }
+    // isConnected = WhatsApp ready (from clientStatus), not Socket.IO connected.
+    // Always render a fresh QR from the server (e.g. after clear-session / re-pair).
+    displayQRCode(data.qrImage);
+    updateStatus('connecting', 'Scan QR Code to connect');
+    qrSection.style.display = 'block';
+    phoneSection.style.display = 'none';
+    isConnected = false;
     
     // Show countdown warning
     const warningEl = document.getElementById('qrRefreshWarning');
@@ -936,6 +1074,8 @@ socket.on('qrCode', function(data) {
 
 socket.on('clientReady', function(data) {
     console.log('✅ WhatsApp client ready');
+    isConnected = true;
+    qrCodeData = null;
     updateStatus('connected', 'WhatsApp Connected');
     qrSection.style.display = 'none';
     phoneSection.style.display = 'block';
@@ -1014,6 +1154,21 @@ socket.on('clientDisconnected', function(data) {
         // Don't show QR immediately - wait to see if session is still valid
         // QR will be shown if clientStatus event shows isReady: false
         console.log('⏳ Waiting for auto-reconnection...');
+    }
+});
+
+socket.on('sessionTools', function (payload) {
+    if (!payload || !payload.action) return;
+    if (payload.action === 'session-cleared') {
+        // Must clear this or socket 'qrCode' handler treats us as still linked and skips the QR
+        isConnected = false;
+        qrCodeData = null;
+        updateStatus('connecting', 'Session reset — scan QR when it appears');
+        qrSection.style.display = 'block';
+        phoneSection.style.display = 'none';
+        showNotification('WhatsApp session was cleared on the server.', 'info');
+    } else if (payload.action === 'cache-cleared') {
+        showNotification('Server cache was cleared.', 'success');
     }
 });
 
@@ -1351,9 +1506,14 @@ function loadMergedMessages() {
             queryParams.append('to', timeFilter.toDate.getTime());
             console.log('Sending datetime filter, from:', new Date(timeFilter.fromDate).toLocaleString(), 'to:', new Date(timeFilter.toDate).toLocaleString());
         } else {
-            queryParams.append('days', 1); // Default to today
-            console.log('Sending datetime filter, default days: 1');
+            queryParams.append('days', String(DEFAULT_MERGED_DAYS));
+            console.log('Sending datetime filter, fallback days:', DEFAULT_MERGED_DAYS);
         }
+    } else {
+        // Without this, the server had no time window and in-memory fallback often yields only very recent messages.
+        queryParams.append('datetimeFilter', 'true');
+        queryParams.append('days', String(DEFAULT_MERGED_DAYS));
+        console.log('Merged load default range: last', DEFAULT_MERGED_DAYS, 'days (enable time filter to customize)');
     }
     
     const queryString = queryParams.toString();
@@ -1654,10 +1814,10 @@ function addMessageToContainer(message) {
     if (message.isFromMe) {
         senderDisplay = 'You';
     } else {
-        // Extract phone number from senderPhone (remove @c.us or @g.us)
+        // Match Sheets / WhatsApp: digits only (server maps @lid 1:1 chats to chat @c.us)
         let phoneNumber = '';
         if (message.senderPhone && message.senderPhone !== 'Me') {
-            phoneNumber = message.senderPhone.replace('@c.us', '').replace('@g.us', '');
+            phoneNumber = attendanceDigitsFromSenderPhone(message.senderPhone);
         }
         
         // Determine the display name - prefer senderName if it's a real name (not just the phone number)
@@ -1692,9 +1852,9 @@ function addMessageToContainer(message) {
     
     // Check if sender is from customer groups (for marking attendance)
     let attendanceActionButtons = '';
-    if (!message.isFromMe && message.senderPhone && message.senderPhone !== 'Me') {
-        // Extract phone number from senderPhone (remove @c.us or @g.us)
-        const customerPhone = message.senderPhone.replace('@c.us', '').replace('@g.us', '');
+    const attendanceDigits = !message.isFromMe ? attendanceDigitsFromSenderPhone(message.senderPhone) : '';
+    if (attendanceDigits) {
+        const customerPhone = attendanceDigits;
         attendanceActionButtons = `
             <button class="btn-mark-attendance" data-customer-phone="${customerPhone}" data-message-timestamp="${message.timestamp}">
                 <i class="fas fa-check-circle"></i> Mark Present
@@ -2402,6 +2562,15 @@ function showSavedFilterPresets() {
 }
 
 // Navigation and Section Management
+function syncSessionToolsCardForActiveTab() {
+    const card = document.getElementById('sessionToolsCard');
+    if (!card) return;
+    const activeNav = document.querySelector('.nav-btn.active');
+    const onHome = activeNav && activeNav.dataset.section === 'status';
+    card.style.display = onHome ? 'block' : 'none';
+    card.setAttribute('aria-hidden', onHome ? 'false' : 'true');
+}
+
 function showSection(sectionName) {
     // Hide all sections
     document.querySelectorAll('.status-card, .qr-section, .phone-section, .groups-section, .group-message-section').forEach(section => {
@@ -2420,8 +2589,12 @@ function showSection(sectionName) {
     switch(sectionName) {
         case 'status':
             document.getElementById('statusCard').style.display = 'block';
-            if (qrCodeData) {
-                document.getElementById('qrSection').style.display = 'block';
+            {
+                const qrEl = document.getElementById('qrSection');
+                // Show QR area while waiting for WhatsApp or when we already have a QR image (e.g. after switching tabs)
+                if (qrEl && (qrCodeData || !isConnected)) {
+                    qrEl.style.display = 'block';
+                }
             }
             break;
         case 'messages':
@@ -2433,6 +2606,11 @@ function showSection(sectionName) {
             console.log('groupsSection element:', groupsSection);
             console.log('groupsContainer element:', groupsContainer);
             console.log('currentGroups count:', Object.keys(currentGroups).length);
+            groupsTrace('showSection:groups', {
+                currentGroupsEmpty: Object.keys(currentGroups).length === 0,
+                selectedGroup,
+                snapshot: summarizeCurrentGroupsForTrace()
+            });
             
             if (groupsSection) {
                 // Check state before changes
@@ -2494,10 +2672,12 @@ function showSection(sectionName) {
                 // Always try to load groups when navigating to groups section
                 if (Object.keys(currentGroups).length === 0) {
                     console.log('📥 Loading customer groups...');
+                    groupsTrace('showSection:groups:triggerLoad', { reason: 'currentGroups empty' });
                     loadCustomerGroups();
                 } else {
                     // Groups already loaded, just display them
                     console.log('✅ Groups already loaded, displaying:', Object.keys(currentGroups).length, 'groups');
+                    groupsTrace('showSection:groups:skipLoad', { reason: 'cache in memory', snapshot: summarizeCurrentGroupsForTrace() });
                     // Use setTimeout to ensure DOM is ready
                     setTimeout(() => {
                         displayGroups(currentGroups);
@@ -2571,6 +2751,8 @@ function showSection(sectionName) {
             console.log('=== showSection: group-message END ===');
             break;
     }
+
+    syncSessionToolsCardForActiveTab();
 }
 
 // Toggle between Basic and Details View
@@ -2603,6 +2785,7 @@ function toggleMessageView() {
 
 // Customer Groups Management
 async function loadCustomerGroups(forceRefresh = false) {
+    groupsTrace('loadCustomerGroups:start', { forceRefresh, beforeSnapshot: summarizeCurrentGroupsForTrace() });
     try {
         if (loadingGroups) {
             loadingGroups.style.display = 'block';
@@ -2622,6 +2805,11 @@ async function loadCustomerGroups(forceRefresh = false) {
         if (data.success) {
             currentGroups = data.groups;
             console.log('Groups loaded successfully:', Object.keys(currentGroups).length, 'groups');
+            groupsTrace('loadCustomerGroups:success', {
+                totalGroups: data.totalGroups,
+                snapshot: summarizeCurrentGroupsForTrace(),
+                cacheInfo: data.cacheInfo || null
+            });
             
             // Show cache info if available
             if (data.cacheInfo && data.cacheInfo.cached) {
@@ -2641,15 +2829,18 @@ async function loadCustomerGroups(forceRefresh = false) {
             );
         } else {
             console.error('Failed to load groups:', data.error);
+            groupsTrace('loadCustomerGroups:apiError', { error: data.error });
             showNotification('Failed to load groups: ' + data.error, 'error');
         }
     } catch (error) {
         console.error('Error loading groups:', error);
+        groupsTrace('loadCustomerGroups:exception', { message: error?.message || String(error) });
         showNotification('Error loading customer groups', 'error');
     } finally {
         if (loadingGroups) {
             loadingGroups.style.display = 'none';
         }
+        groupsTrace('loadCustomerGroups:finally', summarizeCurrentGroupsForTrace());
     }
 }
 
@@ -2839,6 +3030,7 @@ function viewGroupDetails(groupName) {
     
     // Store the selected group for attendance marking
     selectedGroup = groupName;
+    groupsTrace('selectedGroup:set', { groupName, source: 'viewGroupDetails' });
     
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -2902,9 +3094,11 @@ function viewGroupDetails(groupName) {
 
 async function ensureGroupCustomersLoaded(groupName) {
     if (currentGroups[groupName]) {
+        groupsTrace('ensureGroupCustomersLoaded:cacheHit', { groupName, customerCount: (currentGroups[groupName].customers || []).length });
         return currentGroups[groupName];
     }
 
+    groupsTrace('ensureGroupCustomersLoaded:fetch', { groupName });
     try {
         const response = await fetch(`/groups/${encodeURIComponent(groupName)}`);
         if (!response.ok) {
@@ -2918,10 +3112,16 @@ async function ensureGroupCustomersLoaded(groupName) {
                 totalCustomers: data.group.totalCustomers || (data.group.customers ? data.group.customers.length : 0),
                 lastUpdated: data.group.lastUpdated || new Date().toISOString()
             };
+            groupsTrace('ensureGroupCustomersLoaded:merged', {
+                groupName,
+                customerCount: (currentGroups[groupName].customers || []).length,
+                snapshot: summarizeCurrentGroupsForTrace()
+            });
             return currentGroups[groupName];
         }
     } catch (error) {
         console.error('Error loading group details:', error);
+        groupsTrace('ensureGroupCustomersLoaded:error', { groupName, message: error?.message || String(error) });
         showNotification(`Failed to load group ${groupName}`, 'error');
     }
 
@@ -2931,6 +3131,7 @@ async function ensureGroupCustomersLoaded(groupName) {
 async function sendMessageToGroup(groupName) {
     console.log('📤 sendMessageToGroup called for:', groupName);
     selectedGroup = groupName;
+    groupsTrace('selectedGroup:set', { groupName, source: 'sendMessageToGroup' });
     updateScheduleControls();
 
     let group = currentGroups[groupName];
@@ -4009,6 +4210,7 @@ async function scheduleGroupMessage() {
 
 async function markAttendance(groupName, customerPhone, status, message = '') {
     try {
+        groupsTrace('markAttendance:explicitGroup', { groupName, customerPhone, status });
         console.log(`[ATTENDANCE] Marking attendance - Group: ${groupName}, Customer: ${customerPhone}, Status: ${status}, Message: ${message ? message.substring(0, 50) : '(none)'}`);
         
         const response = await fetch(`/groups/${groupName}/attendance`, {
@@ -4042,6 +4244,7 @@ async function checkAbsentees(groupName) {
     try {
         // Store the selected group for attendance marking
         selectedGroup = groupName;
+        groupsTrace('selectedGroup:set', { groupName, source: 'checkAbsentees' });
         console.log(`[DEBUG] Selected group set to: ${groupName}`);
         
         const response = await fetch(`/groups/${groupName}/absentees`);
@@ -5208,6 +5411,13 @@ function deselectAllCustomers() {
 // Mark attendance from a message
 async function markAttendanceFromMessage(customerPhone, messageTimestamp, messageBody = '') {
     try {
+        const targetDigits = normalizePhoneDigits(customerPhone);
+        groupsTrace('markAttendanceFromMessage:start', {
+            customerPhone,
+            targetDigits,
+            selectedGroup,
+            snapshot: summarizeCurrentGroupsForTrace()
+        });
         // First, try to use selectedGroup if available (when viewing a specific group)
         let foundGroup = selectedGroup;
         console.log(`[ATTENDANCE] Selected group: ${selectedGroup || '(none)'}`);
@@ -5217,6 +5427,7 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
         let foundCustomer = null;
         
         if (!foundGroup) {
+            const scanLog = [];
             Object.keys(currentGroups).forEach(groupName => {
                 const group = currentGroups[groupName];
                 if (group.customers && Array.isArray(group.customers)) {
@@ -5230,9 +5441,14 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
                         foundGroup = groupName; // Use first match
                         foundCustomer = customer;
                         customerName = customer.name || customerPhone;
+                        scanLog.push({ groupName, match: true, sheetPhoneDigits: normalizePhoneDigits(customer.phone) });
+                    } else if (group.customers.length && scanLog.length < 12) {
+                        const sample = group.customers.slice(0, 3).map(c => normalizePhoneDigits(c.phone));
+                        scanLog.push({ groupName, match: false, customerCount: group.customers.length, sampleDigits: sample });
                     }
                 }
             });
+            groupsTrace('markAttendanceFromMessage:scanAllGroups', { targetDigits, foundGroup, scanLog });
         } else {
             // If group is already selected, find customer in that group
             const group = currentGroups[foundGroup];
@@ -5246,9 +5462,20 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
                     customerName = foundCustomer.name || customerPhone;
                 }
             }
+            groupsTrace('markAttendanceFromMessage:usedSelectedGroup', {
+                foundGroup,
+                targetDigits,
+                customerInGroup: !!foundCustomer
+            });
         }
         
         if (!foundGroup) {
+            groupsTrace('markAttendanceFromMessage:noGroup', {
+                targetDigits,
+                selectedGroup,
+                snapshot: summarizeCurrentGroupsForTrace(),
+                hint: 'Open Customer Groups tab once, or use View details / Send message to a group so selectedGroup is set; ensure Sheets phones match WhatsApp digits.'
+            });
             showNotification('Customer not found in any group. Please select a group first.', 'error');
             return;
         }
@@ -5278,6 +5505,7 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
         const currentMonth = new Date().toISOString().slice(0, 7);
         
         console.log(`[ATTENDANCE] Using group: ${foundGroup}, Customer: ${customerName} (${customerPhone}), Date: ${attendanceDate}, Message: ${messageBody ? messageBody.substring(0, 50) : '(none)'}`);
+        groupsTrace('markAttendanceFromMessage:resolved', { foundGroup, customerName, targetDigits, attendanceDate });
         
         // Call the attendance endpoint with message content
         const response = await fetch(`/groups/${foundGroup}/attendance`, {
@@ -5310,6 +5538,13 @@ async function markAttendanceFromMessage(customerPhone, messageTimestamp, messag
 // Confirm secret code from a message (logs to CodeMonitor sheet)
 async function confirmCodeFromMessage(customerPhone, messageTimestamp, messageBody = '') {
     try {
+        const targetDigits = normalizePhoneDigits(customerPhone);
+        groupsTrace('confirmCodeFromMessage:start', {
+            customerPhone,
+            targetDigits,
+            selectedGroup,
+            snapshot: summarizeCurrentGroupsForTrace()
+        });
         let foundGroup = selectedGroup;
         console.log(`[CODE] Selected group: ${selectedGroup || '(none)'}`);
 
@@ -5327,9 +5562,13 @@ async function confirmCodeFromMessage(customerPhone, messageTimestamp, messageBo
                     }
                 }
             });
+            groupsTrace('confirmCodeFromMessage:scanAllGroups', { targetDigits, foundGroup });
+        } else {
+            groupsTrace('confirmCodeFromMessage:usedSelectedGroup', { foundGroup, targetDigits });
         }
 
         if (!foundGroup) {
+            groupsTrace('confirmCodeFromMessage:noGroup', { targetDigits, snapshot: summarizeCurrentGroupsForTrace() });
             showNotification('Customer not found in any group. Please select a group first.', 'error');
             return;
         }

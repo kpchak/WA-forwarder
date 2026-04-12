@@ -40,6 +40,26 @@
                 </div>
             </div>
 
+            <div class="session-tools-card home-tab-only" id="sessionToolsCard" style="display: none;">
+                <h3 class="session-tools-title"><i class="fas fa-toolbox"></i> Session &amp; cache</h3>
+                <p class="session-tools-disabled-msg" id="sessionToolsDisabledMsg" style="display: none;"></p>
+                <div id="sessionToolsActions">
+                    <div class="session-tools-key-row" id="sessionToolsKeyRow" style="display: none;">
+                        <label for="sessionToolsAdminKey" class="session-tools-label">Admin key</label>
+                        <input type="password" id="sessionToolsAdminKey" class="session-tools-key-input" placeholder="Matches ADMIN_SECRET on server" autocomplete="off" />
+                    </div>
+                    <div class="session-tools-buttons">
+                        <button type="button" id="clearCacheBtn" class="btn btn-warning" title="Removes .wwebjs_cache, temp/, and in-memory Sheets cache">
+                            <i class="fas fa-eraser"></i> Clear cache
+                        </button>
+                        <button type="button" id="clearSessionBtn" class="btn btn-danger" title="Logs out WhatsApp and deletes .wwebjs_auth — scan QR again">
+                            <i class="fas fa-unlink"></i> Clear session
+                        </button>
+                    </div>
+                    <p class="session-tools-footnote">Clear session deletes the saved WhatsApp login and restarts the client (new QR). Clear cache does not unlink WhatsApp. On production, set <code>ADMIN_SECRET</code> in server <code>.env</code> and enter it here.</p>
+                </div>
+            </div>
+
             <!-- QR Code Section -->
             <div class="qr-section" id="qrSection" style="display: none;">
                 <h2>Scan QR Code with WhatsApp</h2>
@@ -509,6 +529,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=14"></script>
+    <script src="script.js?v=22"></script>
 </body>
 </html>

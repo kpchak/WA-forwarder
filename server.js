@@ -1,12 +1,17 @@
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const envLocalPath = path.join(__dirname, '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  require('dotenv').config({ path: envLocalPath, override: true });
+}
+
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia, Message } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const cors = require('cors');
-const path = require('path');
-const fs = require('fs');
 const { google } = require('googleapis');
 const rateLimit = require('express-rate-limit');
 
@@ -86,6 +91,14 @@ const apiLimiter = rateLimit({
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 
+const sessionToolsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: 'Too many session tool requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Environment detection for production optimizations
 const isProduction = process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT === 'production' || process.env.HOSTINGER === 'true';
 
@@ -139,6 +152,27 @@ if (isProduction) {
 // Override with WWEBJS_WEB_VERSION when wppconnect adds a newer compatible build.
 const WWEBJS_WEB_VERSION = process.env.WWEBJS_WEB_VERSION || '2.3000.1036930770-alpha';
 
+// whatsapp-web.js / Puppeteer also read PUPPETEER_* from process.env internally.
+// If .env points at a Linux Docker path on this machine, unset so launch can fall back.
+(function sanitizePuppeteerEnvPaths() {
+  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH?.trim();
+  if (!fromEnv || fs.existsSync(fromEnv)) return;
+  console.warn(
+    `[WA-forwarder] PUPPETEER_EXECUTABLE_PATH not found (${fromEnv}). Unsetting it so Puppeteer can use a default browser. ` +
+    'Use .env.local for machine-specific Chrome (see .env.example), or set PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false and run npm install.'
+  );
+  delete process.env.PUPPETEER_EXECUTABLE_PATH;
+  // Docker .env often sets SKIP=true; on a dev PC that usually means no downloaded Chromium — unset for this process
+  if (process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true') {
+    console.warn(
+      '[WA-forwarder] Unsetting PUPPETEER_SKIP_CHROMIUM_DOWNLOAD for this run. If Chromium is still missing, run npm install with that variable set to false once.'
+    );
+    delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
+  }
+})();
+
+const puppeteerExecutablePath = process.env.PUPPETEER_EXECUTABLE_PATH?.trim() || undefined;
+
 const client = new Client({
   authStrategy: new LocalAuth({
     dataPath: path.join(__dirname, '.wwebjs_auth')
@@ -152,7 +186,7 @@ const client = new Client({
   puppeteer: {
     headless: true,
     args: puppeteerArgs,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    executablePath: puppeteerExecutablePath
   }
 });
 
@@ -199,8 +233,584 @@ let isProcessingSchedules = false;
 
 // Memory management constants
 const MAX_MESSAGES_PER_REQUEST = 1000; // Maximum messages to return per request
-const MAX_MESSAGES_PER_CHAT = 200; // Maximum messages to fetch per chat
+const MAX_MESSAGES_PER_CHAT = 500; // Per chat fetch cap (wider ranges need more rows before server filter)
 const MEMORY_CLEANUP_INTERVAL = 20 * 60 * 1000; // 20 minutes (optimized for more frequent cleanup)
+
+/**
+ * WhatsApp Web builds often break chat.fetchMessages (loadEarlierMsgs / msgFind → waitForChatLoading).
+ * Reads only messages already in the chat model (no history pagination).
+ */
+async function fetchChatMessagesInMemory(waClient, chat, limit, searchOptions = {}) {
+  const cap = Math.min(Math.max(1, limit), MAX_MESSAGES_PER_CHAT);
+  const fromMe = searchOptions.fromMe;
+  const raw = await waClient.pupPage.evaluate(
+    async (chatId, lim, fromMeFilter) => {
+      const msgFilter = (m) => {
+        if (m.isNotification) return false;
+        if (typeof fromMeFilter === 'boolean' && m.id.fromMe !== fromMeFilter) return false;
+        return true;
+      };
+      const c = await window.WWebJS.getChat(chatId, { getAsModel: false });
+      if (!c || !c.msgs || typeof c.msgs.getModelsArray !== 'function') {
+        return [];
+      }
+      let arr = c.msgs.getModelsArray().filter(msgFilter);
+      arr.sort((a, b) => (a.t > b.t ? 1 : -1));
+      if (arr.length > lim) {
+        arr = arr.slice(-lim);
+      }
+      return arr.map((m) => window.WWebJS.getMessageModel(m));
+    },
+    chat.id._serialized,
+    cap,
+    typeof fromMe === 'boolean' ? fromMe : null
+  );
+  return raw.map((m) => new Message(waClient, m));
+}
+
+/** Pull older messages into the client model when the UI asks for a multi-day range (best-effort). */
+async function preSyncChatHistoryIfNeeded(chat, timeFilterStartMs, timeFilterEndMs, minSpanMs = 20 * 60 * 60 * 1000) {
+  if (!chat || typeof chat.syncHistory !== 'function') return;
+  if (!timeFilterStartMs || !timeFilterEndMs || timeFilterEndMs <= timeFilterStartMs) return;
+  const span = timeFilterEndMs - timeFilterStartMs;
+  if (span < minSpanMs) return;
+  try {
+    await Promise.race([
+      chat.syncHistory(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('syncHistory timeout')), 25000))
+    ]);
+    console.log(`[wwebjs] syncHistory OK for ${chat.id?._serialized || 'chat'} (~${Math.round(span / 86400000)}d window)`);
+  } catch (e) {
+    console.warn(`[wwebjs] syncHistory skipped/failed: ${e?.message || e}`);
+  }
+}
+
+/**
+ * Attempt to load older messages via WhatsApp Web's internal mechanisms.
+ * Unlike msgFindBefore (local DB only), loadEarlierMsgs fetches from the server.
+ *
+ * Current WA Web builds have a broken `waitForChatLoading` dependency that
+ * prevents loadEarlierMsgs from working. This function discovers the broken
+ * webpack module, re-executes the parent module factory with a patched
+ * __webpack_require__ that provides a no-op shim, and then calls the
+ * newly-produced loadEarlierMsgs.
+ */
+async function forceLoadOlderMessages(waClient, chat, targetTimestampSec, maxBatches = 15) {
+  const chatId = chat.id._serialized;
+  const result = await waClient.pupPage.evaluate(
+    async (cid, targetTs, batches) => {
+      const log = [];
+      try {
+        const ch = await window.WWebJS.getChat(cid, { getAsModel: false });
+        if (!ch || !ch.msgs) return { ok: false, log: ['chat/msgs not found'] };
+
+        const getOldest = () =>
+          ch.msgs.getModelsArray().reduce((min, m) => Math.min(min, m.t || Infinity), Infinity);
+        const initialCount = ch.msgs.getModelsArray().length;
+        const oldestBefore = getOldest();
+        log.push(`initial: ${initialCount} msgs, oldest t=${oldestBefore}`);
+
+        // ──── helper: try calling a loadEarlierMsgs function in a loop ────
+        const runLoadLoop = async (fn, label) => {
+          let added = 0;
+          for (let i = 0; i < batches; i++) {
+            const before = ch.msgs.getModelsArray().length;
+            try {
+              await fn();
+            } catch (e) {
+              log.push(`${label}[${i}] error: ${e.message?.slice(0, 160)}`);
+              break;
+            }
+            const after = ch.msgs.getModelsArray().length;
+            if (after === before) { log.push(`${label}: stalled@${i}`); break; }
+            added += (after - before);
+            if (getOldest() <= targetTs) { log.push(`${label}: reached target@${i}`); break; }
+          }
+          if (added) log.push(`${label}: +${added} msgs`);
+          return added;
+        };
+
+        // ──── Approach 1: collection method (Backbone-style) ────
+        if (typeof ch.msgs.loadEarlierMsgs === 'function') {
+          await runLoadLoop(() => ch.msgs.loadEarlierMsgs(), 'coll');
+        } else {
+          log.push('coll.loadEarlierMsgs: NOT available');
+        }
+
+        // ──── Approach 2: WAWebChatLoadMessages.loadEarlierMsgs (raw) ────
+        if (getOldest() > targetTs) {
+          try {
+            const loadModule = window.require('WAWebChatLoadMessages');
+            if (loadModule && typeof loadModule.loadEarlierMsgs === 'function') {
+              await runLoadLoop(() => loadModule.loadEarlierMsgs(ch, ch.msgs), 'mod-raw');
+            }
+          } catch (_) { /* handled below */ }
+        }
+
+        // ──── Approach 3: Monkey-patch waitForChatLoading and retry ────
+        if (getOldest() > targetTs) {
+          try {
+            // Capture __webpack_require__ by injecting a temporary chunk
+            let wpReq = null;
+            const chunkName = 'webpackChunkwhatsapp_web_client';
+            const chunkArr = self[chunkName] || window[chunkName];
+            if (chunkArr && typeof chunkArr.push === 'function') {
+              chunkArr.push([
+                ['__patchProbe_' + Date.now()],
+                {},
+                function (require) { wpReq = require; },
+              ]);
+            }
+            if (!wpReq || !wpReq.c || !wpReq.m) throw new Error('no webpack internals');
+
+            // 3a – find the module ID for WAWebChatLoadMessages
+            let loadModuleId = null;
+            for (const [id, cached] of Object.entries(wpReq.c)) {
+              if (cached?.exports?.loadEarlierMsgs) { loadModuleId = id; break; }
+            }
+            if (!loadModuleId) throw new Error('cannot find loadEarlierMsgs module id');
+            log.push(`loadMod id=${loadModuleId}`);
+
+            // 3b – get the ENTIRE module factory source (not just loadEarlierMsgs)
+            //       because the broken require() likely happens at module scope
+            const factoryFn = wpReq.m[loadModuleId];
+            const src = typeof factoryFn === 'function'
+              ? factoryFn.toString()
+              : wpReq.c[loadModuleId].exports.loadEarlierMsgs.toString();
+            log.push(`factory src len=${src.length}`);
+
+            // 3c – find which required module is undefined or missing waitForChatLoading
+            //       Match patterns like n(12345), e(12345), __webpack_require__(12345)
+            const reqPattern = /(?:^|[^.\w$])([a-zA-Z_$][\w$]*)\((\d{2,})\)/g;
+            let match;
+            const brokenIds = [];
+            const checkedIds = new Set();
+            while ((match = reqPattern.exec(src)) !== null) {
+              const mid = match[2];
+              if (checkedIds.has(mid)) continue;
+              checkedIds.add(mid);
+              try {
+                const mod = wpReq(parseInt(mid));
+                if (mod === undefined || mod === null) {
+                  brokenIds.push(mid);
+                }
+              } catch (_) { brokenIds.push(mid); }
+            }
+            log.push(`checked ${checkedIds.size} require ids, brokenIds: [${brokenIds.join(',')}]`);
+
+            // 3d – also scan ALL webpack cached modules for one that declares
+            //       waitForChatLoading as a getter/property returning undefined
+            for (const [id, cached] of Object.entries(wpReq.c)) {
+              if (!cached?.exports || typeof cached.exports !== 'object') continue;
+              const desc = Object.getOwnPropertyDescriptor(cached.exports, 'waitForChatLoading');
+              if (desc) {
+                if (typeof cached.exports.waitForChatLoading !== 'function') {
+                  Object.defineProperty(cached.exports, 'waitForChatLoading', {
+                    value: async function () {},
+                    writable: true,
+                    configurable: true,
+                  });
+                  log.push(`patched getter in mod ${id}`);
+                } else {
+                  log.push(`mod ${id} already has working waitForChatLoading`);
+                }
+              }
+            }
+
+            // 3e – re-execute the loadEarlierMsgs module factory with patched require
+            const factory = wpReq.m[loadModuleId];
+            if (typeof factory === 'function') {
+              const patchedReq = function (mid) {
+                try {
+                  const mod = wpReq(mid);
+                  if (mod === undefined || mod === null) {
+                    return { waitForChatLoading: async function () {}, __esModule: true };
+                  }
+                  return mod;
+                } catch (_) {
+                  return { waitForChatLoading: async function () {}, __esModule: true };
+                }
+              };
+              Object.assign(patchedReq, wpReq);
+
+              const freshModule = { exports: {} };
+              try {
+                factory.call(null, freshModule, freshModule.exports, patchedReq);
+                log.push(`re-executed factory, keys: ${Object.keys(freshModule.exports).join(',')}`);
+              } catch (fErr) {
+                log.push(`factory re-exec error: ${fErr.message?.slice(0, 160)}`);
+              }
+
+              if (typeof freshModule.exports.loadEarlierMsgs === 'function') {
+                const patchedLoad = freshModule.exports.loadEarlierMsgs;
+                const added = await runLoadLoop(
+                  () => patchedLoad(ch, ch.msgs),
+                  'mod-patched'
+                );
+                if (added > 0) log.push('patched approach succeeded');
+              } else {
+                log.push('patched factory did not produce loadEarlierMsgs');
+              }
+            } else {
+              log.push('no factory found for loadMod');
+            }
+
+            // 3f – also patch broken module IDs directly in the cache and retry original
+            if (getOldest() > targetTs && brokenIds.length > 0) {
+              for (const mid of brokenIds) {
+                wpReq.c[mid] = {
+                  id: parseInt(mid),
+                  loaded: true,
+                  exports: { waitForChatLoading: async function () {}, __esModule: true },
+                };
+              }
+              log.push(`injected shim into cache for ids [${brokenIds.join(',')}]`);
+              try {
+                const loadModule = window.require('WAWebChatLoadMessages');
+                if (typeof loadModule.loadEarlierMsgs === 'function') {
+                  await runLoadLoop(
+                    () => loadModule.loadEarlierMsgs(ch, ch.msgs),
+                    'mod-cache-patch'
+                  );
+                }
+              } catch (e) {
+                log.push(`cache-patch retry error: ${e.message?.slice(0, 120)}`);
+              }
+            }
+          } catch (patchErr) {
+            log.push(`patch approach error: ${patchErr.message?.slice(0, 200)}`);
+          }
+        }
+
+        // ──── Approach 4: Probe other low-level modules (diagnostic) ────
+        if (getOldest() > targetTs) {
+          const probeNames = [
+            'WAWebQueryMsgsCommon', 'WAWebQueryMessages', 'WAWebMsgQuery',
+            'WAWebChatAction', 'WAWebHistorySyncActions', 'WAWebMsgActions',
+            'WAWebQueryExistingMsg', 'WAWebMsgHistoryQuery',
+          ];
+          for (const name of probeNames) {
+            try {
+              const mod = window.require(name);
+              if (mod) log.push(`${name}: [${Object.keys(mod).slice(0, 8).join(',')}]`);
+            } catch (_) { /* not found */ }
+          }
+        }
+
+        const finalCount = ch.msgs.getModelsArray().length;
+        const oldestAfter = getOldest();
+        log.push(`final: ${finalCount} msgs, oldest t=${oldestAfter}`);
+        return { ok: true, initialCount, finalCount, oldestBefore, oldestAfter, log };
+      } catch (e) {
+        log.push(`outer error: ${e.message}`);
+        return { ok: false, log };
+      }
+    },
+    chatId,
+    Math.floor(targetTimestampSec),
+    maxBatches
+  );
+
+  if (result.log && result.log.length > 0) {
+    console.log(`[wwebjs] forceLoadOlderMessages(${chatId}):`, result.log.join(' | '));
+  }
+  return result;
+}
+
+/**
+ * whatsapp-web.js default fetchMessages() uses one findBefore(lastReceivedKey) call — often only a handful of recent rows.
+ * This repeats findBefore from the oldest loaded message (same strategy as the library's fromMe branch) to fill `limit`.
+ */
+async function fetchChatMessagesDeepByLoop(waClient, chat, limit) {
+  const cap = Math.min(Math.max(1, limit), MAX_MESSAGES_PER_CHAT);
+  const chatId = chat.id._serialized;
+  const raw = await waClient.pupPage.evaluate(
+    async (cid, lim) => {
+      const msgFilter = (m) => !m.isNotification;
+      const msgFindLocal = window.require('WAWebDBMessageFindLocal');
+      const WAWebMsgKey = window.require('WAWebMsgKey');
+      const MsgStore = window.require('WAWebCollections').Msg;
+      const findBefore = async (anchorKey, count) => {
+        if (typeof msgFindLocal.msgFindByDirection === 'function') {
+          return await msgFindLocal.msgFindByDirection({
+            anchor: anchorKey,
+            count,
+            direction: 'before',
+          });
+        }
+        return await msgFindLocal.msgFindBefore({ anchor: anchorKey, count });
+      };
+      const toMsgKey = (id) => {
+        if (!id) return null;
+        if (id instanceof WAWebMsgKey) return id;
+        const s = typeof id === 'string' ? id : id._serialized || id?.toString?.();
+        return s ? WAWebMsgKey.fromString(s) : null;
+      };
+      const toMsgModels = (rawMessages) => {
+        const out = [];
+        for (const m of rawMessages) {
+          if (m && typeof m.serialize === 'function') {
+            out.push(m);
+            continue;
+          }
+          const serialized = m?.id?._serialized || (typeof m === 'string' ? m : null);
+          let model =
+            (serialized && MsgStore.get(serialized)) ||
+            (m?.id && MsgStore.get(m.id._serialized || m.id)) ||
+            null;
+          if (!model && m && MsgStore.modelClass) {
+            try {
+              model = new MsgStore.modelClass(m);
+            } catch (e) {
+              model = null;
+            }
+          }
+          if (model) out.push(model);
+        }
+        return out;
+      };
+      const dedupeByMsgId = (arr) => {
+        const seen = new Set();
+        return arr.filter((m) => {
+          const key = m.id?._serialized;
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+
+      const ch = await window.WWebJS.getChat(cid, { getAsModel: false });
+      let msgs = ch.msgs.getModelsArray().filter(msgFilter);
+      msgs.sort((a, b) => (a.t > b.t ? 1 : -1));
+      const batchCap = Math.min(100, lim);
+      let iterations = 0;
+      const maxIterations = 60;
+      while (msgs.length < lim && iterations < maxIterations) {
+        iterations++;
+        const anchor =
+          msgs[0]?.id ||
+          ch.msgs.getModelsArray()[0]?.id ||
+          ch.lastReceivedKey;
+        if (!anchor) break;
+        const anchorKey = toMsgKey(anchor);
+        if (!anchorKey) break;
+        const need = Math.min(batchCap, lim - msgs.length);
+        if (need <= 0) break;
+        const result = await findBefore(anchorKey, need);
+        const rawMessages = Array.isArray(result) ? result : result?.messages || [];
+        if (result?.status === 404 || !rawMessages.length) break;
+        const loadedMessages = toMsgModels(rawMessages);
+        if (!loadedMessages.length) break;
+        const prevLen = msgs.length;
+        msgs = dedupeByMsgId([...loadedMessages.filter(msgFilter), ...msgs]);
+        msgs.sort((a, b) => (a.t > b.t ? 1 : -1));
+        if (msgs.length === prevLen) break;
+        if (loadedMessages.length < need) break;
+      }
+      if (msgs.length > lim) msgs = msgs.slice(-lim);
+      return msgs.map((m) => window.WWebJS.getMessageModel(m));
+    },
+    chatId,
+    cap
+  );
+  return raw.map((m) => new Message(waClient, m));
+}
+
+function oldestMessageTimestampMs(messages) {
+  if (!messages || messages.length === 0) return null;
+  const sec = Math.min(...messages.map((m) => Number(m.timestamp) || 0));
+  return sec > 0 ? sec * 1000 : null;
+}
+
+/**
+ * Default fetchMessages() does NOT set fromMe, so wwebjs uses a single findBefore(lastReceivedKey) path.
+ * With fromMe true/false it uses the while-loop pagination branch — often loads much more history per direction.
+ */
+async function fetchChatMessagesFromMeSplit(waClient, chat, limit) {
+  const cap = Math.min(Math.max(1, limit), MAX_MESSAGES_PER_CHAT);
+  const fetchDir = async (fromMe) => {
+    try {
+      return await chat.fetchMessages({ limit: cap, fromMe });
+    } catch (e) {
+      const d = e?.message || String(e);
+      if (d.includes('waitForChatLoading') || d.includes('loadEarlierMsgs')) {
+        return [];
+      }
+      throw e;
+    }
+  };
+  const [out, inc] = await Promise.all([fetchDir(true), fetchDir(false)]);
+  const map = new Map();
+  for (const m of out) {
+    if (m?.id?._serialized) map.set(m.id._serialized, m);
+  }
+  for (const m of inc) {
+    if (m?.id?._serialized) map.set(m.id._serialized, m);
+  }
+  const merged = [...map.values()].sort(
+    (a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0)
+  );
+  return merged;
+}
+
+function pickRicherHistory(messages, candidate, label, timeFilterStartMs) {
+  if (!candidate || candidate.length === 0) return messages;
+  const oCand = oldestMessageTimestampMs(candidate);
+  const oBase = oldestMessageTimestampMs(messages);
+  const richer =
+    candidate.length > messages.length ||
+    (oCand != null && oBase != null && oCand < oBase - 1000) ||
+    (oCand != null && oBase == null);
+  if (richer) {
+    console.log(
+      `[wwebjs] ${label}: ${candidate.length} msgs (was ${messages.length}); oldest=${oCand ? new Date(oCand).toISOString() : '?'} filterStart=${timeFilterStartMs ? new Date(timeFilterStartMs).toISOString() : 'n/a'}`
+    );
+    return candidate;
+  }
+  return messages;
+}
+
+/** Prefer library fetchMessages; backfill via deep loop + fromMe-split when range needs older rows; sync + retry; then in-memory. */
+async function fetchChatMessagesSafe(waClient, chat, limit, searchOptions = {}, meta = {}) {
+  const timeFilterStartMs = Number(meta.timeFilterStartMs) > 0 ? Number(meta.timeFilterStartMs) : 0;
+  const slackMs = 120000;
+
+  const maybeHistoryBackfill = async (messages) => {
+    if (timeFilterStartMs <= 0 || !messages || messages.length === 0) return messages;
+    const oldestMs = oldestMessageTimestampMs(messages);
+    if (oldestMs == null || oldestMs <= timeFilterStartMs + slackMs) return messages;
+
+    let best = messages;
+    try {
+      const deep = await fetchChatMessagesDeepByLoop(waClient, chat, limit);
+      best = pickRicherHistory(best, deep, 'deep pagination', timeFilterStartMs);
+    } catch (e) {
+      console.warn(`[wwebjs] deep pagination: ${e?.message || e}`);
+    }
+    try {
+      const split = await fetchChatMessagesFromMeSplit(waClient, chat, limit);
+      best = pickRicherHistory(best, split, 'fromMe split pagination', timeFilterStartMs);
+    } catch (e) {
+      console.warn(`[wwebjs] fromMe split: ${e?.message || e}`);
+    }
+
+    if (best === messages && oldestMessageTimestampMs(messages) > timeFilterStartMs + slackMs) {
+      console.warn(
+        `[wwebjs] history backfill did not extend before filter start (still ${messages.length} msgs); WhatsApp DB may not expose older rows for this chat.`
+      );
+    }
+    return best;
+  };
+
+  const fetchOnce = () => chat.fetchMessages({ limit, ...searchOptions });
+  try {
+    let messages = await fetchOnce();
+    messages = await maybeHistoryBackfill(messages);
+    return messages;
+  } catch (err) {
+    const detail = err?.message || String(err);
+    if (!detail.includes('waitForChatLoading') && !detail.includes('loadEarlierMsgs')) {
+      throw err;
+    }
+    console.warn(`[wwebjs] fetchMessages failed (1st try): ${detail.slice(0, 160)}`);
+    if (typeof chat.syncHistory === 'function') {
+      try {
+        await Promise.race([
+          chat.syncHistory(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 20000))
+        ]);
+        console.warn('[wwebjs] syncHistory finished; retrying fetchMessages once');
+      } catch (syncErr) {
+        console.warn(`[wwebjs] syncHistory: ${syncErr?.message || syncErr}`);
+      }
+    }
+    try {
+      let messages = await fetchOnce();
+      messages = await maybeHistoryBackfill(messages);
+      return messages;
+    } catch (err2) {
+      const d2 = err2?.message || String(err2);
+      if (!d2.includes('waitForChatLoading') && !d2.includes('loadEarlierMsgs')) {
+        throw err2;
+      }
+      console.warn(
+        `[wwebjs] fetchMessages failed after sync; using in-memory only for ${chat.id._serialized}: ${d2.slice(0, 160)}`
+      );
+      let messages = await fetchChatMessagesInMemory(waClient, chat, limit, searchOptions);
+      messages = await maybeHistoryBackfill(messages);
+      return messages;
+    }
+  }
+}
+
+function digitsOnlyPhone(s) {
+  return String(s || '').replace(/\D/g, '');
+}
+
+/**
+ * WhatsApp may set msg.from to ...@lid (opaque id). Sheets use country + mobile digits.
+ * For 1:1 @c.us chats, use the chat id as the customer phone when from is @lid.
+ */
+async function resolveSenderPhoneAndName(waClient, chatPhoneNumber, msg, contactTimeoutMs = 2000) {
+  if (msg.fromMe) {
+    return { senderIdForFrom: msg.from, senderPhone: 'Me', senderName: 'You' };
+  }
+
+  const chatId = String(chatPhoneNumber || '');
+  const senderId = (chatId.includes('@g.us') && msg.author) ? msg.author : msg.from;
+  const sid = String(senderId || '');
+
+  let senderPhone = '';
+
+  if (chatId.endsWith('@c.us')) {
+    if (sid.includes('@lid')) {
+      senderPhone = digitsOnlyPhone(chatId.replace(/@c\.us$/i, ''));
+    } else {
+      senderPhone = digitsOnlyPhone(sid.replace(/@c\.us$/i, ''));
+    }
+  } else if (chatId.includes('@g.us')) {
+    if (sid.includes('@lid')) {
+      try {
+        const contact = await Promise.race([
+          waClient.getContactById(senderId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), contactTimeoutMs))
+        ]);
+        if (contact && contact.number) {
+          senderPhone = digitsOnlyPhone(contact.number);
+        }
+      } catch (_) {
+        /* fallback below */
+      }
+      if (!senderPhone) {
+        senderPhone = digitsOnlyPhone(sid.replace(/@lid$/i, ''));
+      }
+    } else {
+      senderPhone = digitsOnlyPhone(sid.replace(/@c\.us$/i, '').replace(/@g\.us$/i, ''));
+    }
+  } else {
+    senderPhone = digitsOnlyPhone(
+      sid.replace(/@c\.us$/i, '').replace(/@g\.us$/i, '').replace(/@lid$/i, '')
+    );
+  }
+
+  let senderName = 'Unknown';
+  try {
+    const contact = await Promise.race([
+      waClient.getContactById(senderId),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), contactTimeoutMs))
+    ]);
+    if (contact && contact.name) {
+      senderName = contact.name;
+    } else {
+      senderName = senderPhone || sid;
+    }
+  } catch (error) {
+    senderName = senderPhone || sid;
+  }
+
+  return { senderIdForFrom: senderId, senderPhone, senderName };
+}
+
 const MEMORY_WARNING_THRESHOLD = 0.9; // Warn if memory usage exceeds 90% of limit
 
 // Google Sheets caching
@@ -794,9 +1404,173 @@ client.on('message', async (message) => {
   }
 });
 
+const WWEBJS_AUTH_DIR = path.join(__dirname, '.wwebjs_auth');
+const WWEBJS_CACHE_DIR = path.join(__dirname, '.wwebjs_cache');
+const TEMP_DIR = path.join(__dirname, 'temp');
+
+let sessionToolsOperationInProgress = false;
+
+function adminSecretConfigured() {
+  const s = process.env.ADMIN_SECRET;
+  return typeof s === 'string' && s.trim().length > 0;
+}
+
+function sessionToolsAllowed(req, res) {
+  if (isProduction && !adminSecretConfigured()) {
+    res.status(503).json({
+      error: 'Set ADMIN_SECRET in the server .env to use Clear session / Clear cache from the UI in production.'
+    });
+    return false;
+  }
+  if (adminSecretConfigured() && req.body?.adminSecret !== process.env.ADMIN_SECRET) {
+    res.status(401).json({ error: 'Invalid or missing admin key' });
+    return false;
+  }
+  return true;
+}
+
+function removePathRecursive(targetPath) {
+  try {
+    if (!fs.existsSync(targetPath)) {
+      return { ok: true, removed: false };
+    }
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    return { ok: true, removed: true };
+  } catch (err) {
+    return { ok: false, removed: false, error: err.message };
+  }
+}
+
+async function destroyClientForSessionReset() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+  isReconnecting = false;
+  reconnectAttempts = 0;
+
+  try {
+    if (client && typeof client.destroy === 'function') {
+      await Promise.race([
+        client.destroy(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Destroy timeout')), 10000))
+      ]).catch(() => { });
+    }
+  } catch (e) {
+    console.log('⚠️ destroyClientForSessionReset:', e.message);
+  }
+  await new Promise((r) => setTimeout(r, 1200));
+}
+
+function resetWhatsAppFlagsForFreshSession() {
+  qrCodeData = null;
+  lastQRCodeEmitted = null;
+  isClientReady = false;
+  isInitializing = false;
+  clientInitialized = false;
+  firstReadyProcessed = false;
+  firstAuthenticatedProcessed = false;
+  forceReadyLock = false;
+  readyEventCount = 0;
+  lastReadyTime = null;
+  authenticatedEventCount = 0;
+  lastAuthenticatedTime = null;
+  lastAuthFailureTime = null;
+  authFailureCount = 0;
+}
+
 // Routes
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/api/whatsapp/session-tools-config', (req, res) => {
+  res.json({
+    enabled: !isProduction || adminSecretConfigured(),
+    adminKeyRequired: adminSecretConfigured()
+  });
+});
+
+app.post('/api/whatsapp/clear-cache', sessionToolsLimiter, async (req, res) => {
+  if (!sessionToolsAllowed(req, res)) return;
+  if (!req.body?.confirm) {
+    return res.status(400).json({ error: 'Send JSON body: { "confirm": true }' });
+  }
+
+  const results = {
+    wwebjs_cache: removePathRecursive(WWEBJS_CACHE_DIR),
+    temp: removePathRecursive(TEMP_DIR)
+  };
+  try {
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
+  } catch (e) {
+    results.tempRecreate = e.message;
+  }
+
+  customerGroupsCache = null;
+  customerGroupsCacheTime = 0;
+
+  io.emit('sessionTools', { action: 'cache-cleared', results });
+  res.json({
+    ok: true,
+    message: 'Cache folders cleared (best effort). Refresh the page if the UI acts stale.',
+    results
+  });
+});
+
+app.post('/api/whatsapp/clear-session', sessionToolsLimiter, async (req, res) => {
+  if (!sessionToolsAllowed(req, res)) return;
+  if (!req.body?.confirm) {
+    return res.status(400).json({ error: 'Send JSON body: { "confirm": true }' });
+  }
+  if (sessionToolsOperationInProgress) {
+    return res.status(409).json({ error: 'Another session operation is already running' });
+  }
+
+  sessionToolsOperationInProgress = true;
+  try {
+    await destroyClientForSessionReset();
+    resetWhatsAppFlagsForFreshSession();
+
+    const authRemoved = removePathRecursive(WWEBJS_AUTH_DIR);
+    try {
+      fs.mkdirSync(WWEBJS_AUTH_DIR, { recursive: true });
+    } catch (e) {
+      sessionToolsOperationInProgress = false;
+      return res.status(500).json({ ok: false, error: 'Could not recreate session folder: ' + e.message });
+    }
+
+    removePathRecursive(WWEBJS_CACHE_DIR);
+    try {
+      fs.mkdirSync(WWEBJS_CACHE_DIR, { recursive: true });
+    } catch (e) {
+      /* optional */
+    }
+
+    io.emit('sessionTools', { action: 'session-cleared' });
+    // Reset WhatsApp-ready state for all browsers (otherwise UI keeps isConnected=true and ignores new QR)
+    io.emit('clientStatus', {
+      isReady: false,
+      targetPhones: targetPhoneNumbers,
+      targetPhone: targetPhoneNumbers.length > 0 ? targetPhoneNumbers[0] : null
+    });
+    initializeWhatsAppClient();
+
+    res.json({
+      ok: true,
+      message: 'Session removed. The client is restarting; scan the QR code when it appears.',
+      authRemoved
+    });
+  } catch (err) {
+    console.error('clear-session error:', err);
+    res.status(500).json({ ok: false, error: err.message || String(err) });
+  } finally {
+    sessionToolsOperationInProgress = false;
+  }
 });
 
 app.post('/set-phone', (req, res) => {
@@ -877,15 +1651,21 @@ app.get('/messages/:phoneNumber', async (req, res) => {
 
     // Dynamic time window and limit
     const days = parseInt(req.query.days) || 7;
-    const estimatedLimit = Math.max(50, days * 50);
+    const estimatedLimit = Math.min(MAX_MESSAGES_PER_CHAT, Math.max(50, days * 50));
     console.log(`Loading messages with days=${days}, estimatedLimit=${estimatedLimit}`);
 
-    const messages = await chat.fetchMessages({ limit: estimatedLimit });
+    const nowMs = Date.now();
+    const sinceMs = nowMs - (days * 24 * 60 * 60 * 1000);
+    await preSyncChatHistoryIfNeeded(chat, sinceMs, nowMs);
+    if (days > 1) {
+      await forceLoadOlderMessages(client, chat, Math.floor(sinceMs / 1000), Math.min(20, days * 3));
+    }
+
+    const messages = await fetchChatMessagesSafe(client, chat, estimatedLimit, {}, { timeFilterStartMs: sinceMs });
     console.log('Messages fetched:', messages.length);
 
     // Filter messages within requested window
-    const now = Date.now();
-    const sinceMs = now - (days * 24 * 60 * 60 * 1000);
+    const now = nowMs;
     console.log(`Time calculation: now=${new Date(now).toLocaleString()}, sinceMs=${new Date(sinceMs).toLocaleString()}, days=${days}`);
 
     const recentMessages = messages.filter(msg => {
@@ -906,35 +1686,13 @@ app.get('/messages/:phoneNumber', async (req, res) => {
     }
 
     const formattedMessages = await Promise.all(recentMessages.map(async (msg) => {
-      // Get sender information
-      let senderName = 'Unknown';
-      let senderPhone = '';
+      const { senderIdForFrom, senderPhone, senderName } = await resolveSenderPhoneAndName(
+        client,
+        phoneNumber,
+        msg,
+        2000
+      );
 
-      if (msg.fromMe) {
-        senderName = 'You';
-        senderPhone = 'Me';
-      } else {
-        const senderId = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
-        senderPhone = (senderId || '').replace('@c.us', '').replace('@g.us', '');
-
-        try {
-          const contactPromise = client.getContactById(senderId);
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout')), 2000)
-          );
-          const contact = await Promise.race([contactPromise, timeoutPromise]);
-          if (contact && contact.name) {
-            senderName = contact.name;
-          } else {
-            senderName = senderPhone;
-          }
-        } catch (error) {
-          // If timeout or error, just use phone number
-          senderName = senderPhone;
-        }
-      }
-
-      const senderIdForFrom = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
       const messageData = {
         id: msg.id._serialized,
         body: msg.body || '',
@@ -1094,11 +1852,20 @@ async function handleMergedMessagesRequest(req, res) {
           console.log(`Using hours-based filter: hours=${hours}, days=${days}`);
         }
 
+        if (timeFilterStart > 0 && timeFilterEnd > timeFilterStart) {
+          await preSyncChatHistoryIfNeeded(chat, timeFilterStart, timeFilterEnd);
+          if (days > 1) {
+            await forceLoadOlderMessages(client, chat, Math.floor(timeFilterStart / 1000), Math.min(20, days * 3));
+          }
+        }
+
         // Calculate appropriate limit based on time range (roughly 50 messages per day)
         // If no filter, load minimum 30 to ensure we have enough data
         // Cap at MAX_MESSAGES_PER_CHAT to prevent memory issues
-        const estimatedLimit = days > 0 ? Math.min(MAX_MESSAGES_PER_CHAT, Math.max(50, days * 50)) : Math.min(MAX_MESSAGES_PER_CHAT, 200); // Default to 200 messages if no filter, capped
-        const messages = await chat.fetchMessages({ limit: estimatedLimit });
+        const estimatedLimit = days > 0 ? Math.min(MAX_MESSAGES_PER_CHAT, Math.max(50, days * 50)) : Math.min(MAX_MESSAGES_PER_CHAT, 400);
+        const meta =
+          timeFilterStart > 0 ? { timeFilterStartMs: timeFilterStart } : {};
+        const messages = await fetchChatMessagesSafe(client, chat, estimatedLimit, {}, meta);
         console.log(`Messages fetched from ${phoneNumber}:`, messages.length);
 
         // Debug: Show date range of fetched messages
@@ -1162,35 +1929,13 @@ async function handleMergedMessagesRequest(req, res) {
 
           messageIds.add(msg.id._serialized);
 
-          // Get sender information
-          let senderName = 'Unknown';
-          let senderPhone = '';
+          const { senderIdForFrom, senderPhone, senderName } = await resolveSenderPhoneAndName(
+            client,
+            phoneNumber,
+            msg,
+            500
+          );
 
-          if (msg.fromMe) {
-            senderName = 'You';
-            senderPhone = 'Me';
-          } else {
-            // For group chats, msg.from is the group ID; msg.author is the participant who sent the message
-            const senderId = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
-            senderPhone = (senderId || '').replace('@c.us', '').replace('@g.us', '');
-
-            try {
-              const contactPromise = client.getContactById(senderId);
-              const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout')), 500)
-              );
-              const contact = await Promise.race([contactPromise, timeoutPromise]);
-              if (contact && contact.name) {
-                senderName = contact.name;
-              } else {
-                senderName = senderPhone;
-              }
-            } catch (error) {
-              senderName = senderPhone;
-            }
-          }
-
-          const senderIdForFrom = (phoneNumber.includes('@g.us') && msg.author) ? msg.author : msg.from;
           const messageData = {
             id: msg.id._serialized,
             body: msg.body || '',
@@ -1445,7 +2190,7 @@ app.post('/download-media', async (req, res) => {
     console.log(`✅ [MEDIA DOWNLOAD] Chat found: ${chat.name || chatId} (ID: ${chat.id._serialized || 'N/A'})`);
 
     console.log(`🔍 [MEDIA DOWNLOAD] Fetching messages (limit: 100)...`);
-    const messages = await chat.fetchMessages({ limit: 100 });
+    const messages = await fetchChatMessagesSafe(client, chat, 100);
     console.log(`✅ [MEDIA DOWNLOAD] Fetched ${messages.length} messages to search`);
 
     // Log sample of first few messages for debugging
@@ -1547,7 +2292,7 @@ app.post('/download-media', async (req, res) => {
     if (!message) {
       console.log(`\n🔍 [MEDIA DOWNLOAD] Message not found in first 100, trying extended search (limit: 500)...`);
       // Try fetching more messages if not found in first 100
-      const moreMessages = await chat.fetchMessages({ limit: 500 });
+      const moreMessages = await fetchChatMessagesSafe(client, chat, 500);
       console.log(`✅ [MEDIA DOWNLOAD] Fetched ${moreMessages.length} messages in extended search`);
       const message2 = moreMessages.find(msg => {
         const serializedId = msg.id?._serialized;
@@ -3687,6 +4432,20 @@ function replaceMessagePlaceholders(message, customer, sendDate = new Date()) {
   return replacedMessage;
 }
 
+/** Best-effort match: WhatsApp may normalize line breaks, spacing, or truncate previews. */
+function outgoingTextLikelyMatchesChatBody(sentText, messageBody) {
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const a = norm(sentText);
+  const b = norm(messageBody);
+  if (!a.length || !b.length) return false;
+  if (b.includes(a)) return true;
+  const prefix = a.substring(0, Math.min(40, a.length));
+  if (prefix.length >= 2 && b.includes(prefix)) return true;
+  const firstLine = norm(sentText.split('\n')[0] || '');
+  if (firstLine.length >= 2 && b.includes(firstLine)) return true;
+  return false;
+}
+
 async function sendGroupMessageInternal(groupName, options = {}) {
   try {
     const {
@@ -3838,6 +4597,7 @@ async function sendGroupMessageInternal(groupName, options = {}) {
 
           let sendSuccess = false;
           let messageVerified = false;
+          let usedFallbackSend = false;
 
           try {
             await chat.sendMessage(personalizedMessage, { sendSeen: false });
@@ -3850,6 +4610,7 @@ async function sendGroupMessageInternal(groupName, options = {}) {
             // Check for sendSeen error - BUT DO NOT ASSUME SUCCESS yet
             if (errorMsg.includes('markedUnread') || errorMsg.includes('sendSeen')) {
               console.warn(`⚠️ ignoring sendSeen error, proceeding to verification...`);
+              sendSuccess = true;
             } else {
               throw sendError; // Re-throw other errors
             }
@@ -3864,12 +4625,12 @@ async function sendGroupMessageInternal(groupName, options = {}) {
 
           while (!messageVerified && verifyAttempts < maxVerifyAttempts) {
             try {
-              const recentMessages = await chat.fetchMessages({ limit: 10 });
+              const recentMessages = await fetchChatMessagesSafe(client, chat, 15);
               const now = Date.now() / 1000;
               const found = recentMessages.find(m => {
                 const age = now - m.timestamp;
-                return age < 60 && m.fromMe === true && // Increased age check to 60s
-                  (m.body || '').trim().includes((personalizedMessage || '').substring(0, 20));
+                return age < 90 && m.fromMe === true &&
+                  outgoingTextLikelyMatchesChatBody(personalizedMessage, m.body || '');
               });
 
               if (found) {
@@ -3890,8 +4651,9 @@ async function sendGroupMessageInternal(groupName, options = {}) {
             }
           }
 
-          if (!messageVerified) {
-            console.warn(`⚠️ Standard sendMessage failed verification for ${customer.name}. Trying fallback...`);
+          // Only run UI fallback when sendMessage did not complete — avoids double-sending.
+          if (!messageVerified && !sendSuccess) {
+            console.warn(`⚠️ sendMessage did not complete for ${customer.name}. Trying fallback...`);
 
             // Fallback: UI Automation
             try {
@@ -3973,12 +4735,14 @@ async function sendGroupMessageInternal(groupName, options = {}) {
               }, chatId, personalizedMessage);
 
               if (fallbackResult.success) {
+                usedFallbackSend = true;
+                sendSuccess = true;
                 console.log(`✅ Fallback successful (${fallbackResult.method}) for ${customer.name}`);
 
                 // Verify again after fallback
                 await new Promise(resolve => setTimeout(resolve, 3000));
-                const recentMessages = await chat.fetchMessages({ limit: 5 });
-                const found = recentMessages.find(m => m.fromMe && (m.body || '').includes(personalizedMessage.substring(0, 10)));
+                const recentMessages = await fetchChatMessagesSafe(client, chat, 5);
+                const found = recentMessages.find(m => m.fromMe && outgoingTextLikelyMatchesChatBody(personalizedMessage, m.body || ''));
 
                 if (found) {
                   messageVerified = true;
@@ -4002,6 +4766,17 @@ async function sendGroupMessageInternal(groupName, options = {}) {
               status: 'sent',
               warning: sendSuccess ? undefined : 'Sent via fallback'
             });
+          } else if (sendSuccess) {
+            successCount++;
+            results.push({
+              phone: customer.phone,
+              name: customer.name,
+              status: 'sent',
+              warning: usedFallbackSend
+                ? 'Sent via fallback; could not confirm in chat list'
+                : 'WhatsApp accepted the message; chat history check was inconclusive'
+            });
+            console.log(`✅ Counting as sent for ${customer.name} (send OK, verification optional)`);
           } else {
             errorCount++;
             results.push({

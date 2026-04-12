@@ -1,6 +1,7 @@
 FROM node:20-slim
 
 RUN apt-get update && apt-get install -y \
+    git \
     wget gnupg ca-certificates \
     fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \
     libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 \
@@ -20,6 +21,10 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# GitHub deps over HTTPS (no SSH in Docker)
+RUN git config --global url."https://github.com/".insteadOf "git@github.com:" \
+    && git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
 
 COPY package*.json ./
 RUN npm ci --omit=dev
