@@ -15,6 +15,7 @@ yarn-error.log*
 .cursor/
 
 # Session and cache
+.wwebjs_auth/
 .wwebjs_cache/
 session/
 temp/
