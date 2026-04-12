@@ -1419,11 +1419,47 @@ const WWEBJS_CACHE_DIR = path.join(__dirname, '.wwebjs_cache');
 const TEMP_DIR = path.join(__dirname, 'temp');
 
 /** Chrome leaves Singleton* locks in the profile; new Docker containers get a new hostname and refuse to start (Code 21). */
-const CHROME_SINGLETON_LOCK_NAMES = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie']);
+const CHROME_SINGLETON_BASENAMES = new Set([
+  'singletonlock',
+  'singletonsocket',
+  'singletoncookie',
+]);
 
+function isChromeSingletonLockFile(name) {
+  const n = String(name || '').toLowerCase();
+  return CHROME_SINGLETON_BASENAMES.has(n);
+}
+
+/**
+ * LocalAuth uses userDataDir `.wwebjs_auth/session` (see whatsapp-web.js LocalAuth).
+ * Locks may sit at session root, in Default/, or deeper after crashes.
+ */
 function removeChromeProfileSingletonLocks(rootDir) {
   if (!rootDir || !fs.existsSync(rootDir)) return;
   const removed = [];
+  const tryUnlink = (full) => {
+    try {
+      if (fs.existsSync(full)) {
+        fs.unlinkSync(full);
+        removed.push(full);
+      }
+    } catch (e) {
+      console.warn(`⚠️ Could not remove Chrome lock file ${full}: ${e.message}`);
+    }
+  };
+  const hotRelPaths = [
+    '',
+    'session',
+    path.join('session', 'Default'),
+    'Default',
+  ];
+  const singletonExact = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+  for (const rel of hotRelPaths) {
+    const base = rel ? path.join(rootDir, rel) : rootDir;
+    for (const name of singletonExact) {
+      tryUnlink(path.join(base, name));
+    }
+  }
   const walk = (dir) => {
     let entries;
     try {
@@ -1435,20 +1471,18 @@ function removeChromeProfileSingletonLocks(rootDir) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
         walk(full);
-      } else if (CHROME_SINGLETON_LOCK_NAMES.has(ent.name)) {
-        try {
-          fs.unlinkSync(full);
-          removed.push(full);
-        } catch (e) {
-          console.warn(`⚠️ Could not remove Chrome lock file ${full}: ${e.message}`);
-        }
+      } else if (isChromeSingletonLockFile(ent.name)) {
+        tryUnlink(full);
       }
     }
   };
   try {
     walk(rootDir);
     if (removed.length) {
-      console.log(`🧹 Removed ${removed.length} stale Chrome profile lock file(s) (Docker / container restart).`);
+      console.log(
+        `🧹 Removed ${removed.length} stale Chrome profile lock file(s) (Docker / new container hostname).`
+      );
+      removed.forEach((p) => console.log(`   … ${p}`));
     }
   } catch (e) {
     console.warn('removeChromeProfileSingletonLocks:', e.message);
@@ -5341,6 +5375,7 @@ async function initializeWhatsAppClient() {
       }
       // Wait a bit for cleanup to complete
       await new Promise(resolve => setTimeout(resolve, 1000));
+      removeChromeProfileSingletonLocks(WWEBJS_AUTH_DIR);
     }
   } catch (cleanupError) {
     console.log('⚠️ Error during client cleanup:', cleanupError.message);
@@ -5384,8 +5419,8 @@ async function initializeWhatsAppClient() {
   }
 
   try {
-    // Add a small delay to ensure any previous browser instances are fully closed
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Give Chrome time to release profile locks after destroy (Docker restarts / new hostname).
+    await new Promise(resolve => setTimeout(resolve, sessionExists ? 2000 : 500));
 
     removeChromeProfileSingletonLocks(WWEBJS_AUTH_DIR);
 
