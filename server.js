@@ -1433,20 +1433,21 @@ function isChromeSingletonLockFile(name) {
 /**
  * LocalAuth uses userDataDir `.wwebjs_auth/session` (see whatsapp-web.js LocalAuth).
  * Locks may sit at session root, in Default/, or deeper after crashes.
+ * Chrome may create Singleton* as a file, symlink, or (rarely) directory — use rmSync.
  */
+function tryRemoveChromeSingletonPath(full, removed, label) {
+  try {
+    if (!fs.existsSync(full)) return;
+    fs.rmSync(full, { recursive: true, force: true });
+    removed.push(label || full);
+  } catch (e) {
+    console.warn(`⚠️ Could not remove Chrome singleton path ${full}: ${e.message}`);
+  }
+}
+
 function removeChromeProfileSingletonLocks(rootDir) {
   if (!rootDir || !fs.existsSync(rootDir)) return;
   const removed = [];
-  const tryUnlink = (full) => {
-    try {
-      if (fs.existsSync(full)) {
-        fs.unlinkSync(full);
-        removed.push(full);
-      }
-    } catch (e) {
-      console.warn(`⚠️ Could not remove Chrome lock file ${full}: ${e.message}`);
-    }
-  };
   const hotRelPaths = [
     '',
     'session',
@@ -1457,7 +1458,7 @@ function removeChromeProfileSingletonLocks(rootDir) {
   for (const rel of hotRelPaths) {
     const base = rel ? path.join(rootDir, rel) : rootDir;
     for (const name of singletonExact) {
-      tryUnlink(path.join(base, name));
+      tryRemoveChromeSingletonPath(path.join(base, name), removed);
     }
   }
   const walk = (dir) => {
@@ -1470,9 +1471,13 @@ function removeChromeProfileSingletonLocks(rootDir) {
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        walk(full);
+        if (isChromeSingletonLockFile(ent.name)) {
+          tryRemoveChromeSingletonPath(full, removed);
+        } else {
+          walk(full);
+        }
       } else if (isChromeSingletonLockFile(ent.name)) {
-        tryUnlink(full);
+        tryRemoveChromeSingletonPath(full, removed);
       }
     }
   };
@@ -1480,12 +1485,45 @@ function removeChromeProfileSingletonLocks(rootDir) {
     walk(rootDir);
     if (removed.length) {
       console.log(
-        `🧹 Removed ${removed.length} stale Chrome profile lock file(s) (Docker / new container hostname).`
+        `🧹 Removed ${removed.length} stale Chrome singleton path(s) (Docker / new container hostname).`
       );
       removed.forEach((p) => console.log(`   … ${p}`));
     }
   } catch (e) {
     console.warn('removeChromeProfileSingletonLocks:', e.message);
+  }
+}
+
+/** Optional nuclear fix for Code 21 when singleton lives inside Default (may require new WhatsApp QR). */
+function removeChromeDefaultProfileIfRequested() {
+  const v = String(process.env.WWEBJS_RM_CHROME_DEFAULT_BEFORE_INIT || '').toLowerCase();
+  if (v !== 'true' && v !== '1' && v !== 'yes') return;
+  const defaultDir = path.join(WWEBJS_AUTH_DIR, 'session', 'Default');
+  if (!fs.existsSync(defaultDir)) return;
+  try {
+    fs.rmSync(defaultDir, { recursive: true, force: true });
+    console.log(
+      '🧹 WWEBJS_RM_CHROME_DEFAULT_BEFORE_INIT: removed Chrome profile folder session/Default (fixes stubborn Code 21; you may need to scan QR if auth was only in that profile).'
+    );
+  } catch (e) {
+    console.warn('⚠️ Could not remove session/Default:', e.message);
+  }
+}
+
+function logWwebjsSessionLayoutForDiagnostics() {
+  const sdir = path.join(WWEBJS_AUTH_DIR, 'session');
+  if (!fs.existsSync(sdir)) {
+    console.log('🧭 .wwebjs_auth/session: (missing — created on first browser launch)');
+    return;
+  }
+  try {
+    const names = fs.readdirSync(sdir);
+    const preview = names.slice(0, 35).join(', ');
+    console.log(
+      `🧭 .wwebjs_auth/session (${names.length} entries): ${preview}${names.length > 35 ? ' …' : ''}`
+    );
+  } catch (e) {
+    console.warn('🧭 could not read .wwebjs_auth/session:', e.message);
   }
 }
 
@@ -5422,6 +5460,8 @@ async function initializeWhatsAppClient() {
     // Give Chrome time to release profile locks after destroy (Docker restarts / new hostname).
     await new Promise(resolve => setTimeout(resolve, sessionExists ? 2000 : 500));
 
+    logWwebjsSessionLayoutForDiagnostics();
+    removeChromeDefaultProfileIfRequested();
     removeChromeProfileSingletonLocks(WWEBJS_AUTH_DIR);
 
     console.log('🔍 Calling client.initialize()...');
