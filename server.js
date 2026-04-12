@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const envLocalPath = path.join(__dirname, '.env.local');
 if (fs.existsSync(envLocalPath)) {
@@ -918,6 +919,7 @@ function scheduleReconnect() {
       // Check if client still exists and has initialize method
       if (client && typeof client.initialize === 'function') {
         console.log('🔄 Initializing client for reconnection...');
+        removeStaleGoogleChromeTmpArtifacts();
         removeChromeProfileSingletonLocks(WWEBJS_AUTH_DIR);
         await client.initialize().catch(initError => {
           isInitializing = false;
@@ -1435,13 +1437,41 @@ function isChromeSingletonLockFile(name) {
  * Locks may sit at session root, in Default/, or deeper after crashes.
  * Chrome may create Singleton* as a file, symlink, or (rarely) directory — use rmSync.
  */
-function tryRemoveChromeSingletonPath(full, removed, label) {
+function tryRemoveChromeSingletonPath(full, removed) {
   try {
-    if (!fs.existsSync(full)) return;
+    // Use lstat so we remove symlink entries even when the target is missing (broken link to /tmp).
+    fs.lstatSync(full);
     fs.rmSync(full, { recursive: true, force: true });
-    removed.push(label || full);
+    removed.push(full);
   } catch (e) {
-    console.warn(`⚠️ Could not remove Chrome singleton path ${full}: ${e.message}`);
+    if (e.code !== 'ENOENT') {
+      console.warn(`⚠️ Could not remove Chrome singleton path ${full}: ${e.message}`);
+    }
+  }
+}
+
+/** Chrome uses temp dirs like com.google.Chrome.<random> under TMPDIR; stale dirs and volume symlinks cause Code 21 after container replacement. */
+function removeStaleGoogleChromeTmpArtifacts() {
+  const tmpRoots = new Set([process.env.TMPDIR, os.tmpdir(), '/tmp'].filter(Boolean));
+  for (const tmp of tmpRoots) {
+    let entries;
+    try {
+      entries = fs.readdirSync(tmp, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (!ent.name.startsWith('com.google.Chrome')) continue;
+      const p = path.join(tmp, ent.name);
+      try {
+        fs.rmSync(p, { recursive: true, force: true });
+        console.log(`🧹 Removed stale Chromium temp dir: ${p}`);
+      } catch (e) {
+        if (e.code !== 'ENOENT') {
+          console.warn(`⚠️ Could not remove ${p}: ${e.message}`);
+        }
+      }
+    }
   }
 }
 
@@ -1470,14 +1500,14 @@ function removeChromeProfileSingletonLocks(rootDir) {
     }
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        if (isChromeSingletonLockFile(ent.name)) {
-          tryRemoveChromeSingletonPath(full, removed);
-        } else {
-          walk(full);
-        }
-      } else if (isChromeSingletonLockFile(ent.name)) {
+      // Symlinks (SingletonLock → hostname, SingletonSocket → /tmp/...) must be removed by name first;
+      // Node's dirent.isDirectory() may follow links and we must not walk into Singleton*.
+      if (isChromeSingletonLockFile(ent.name)) {
         tryRemoveChromeSingletonPath(full, removed);
+        continue;
+      }
+      if (ent.isDirectory()) {
+        walk(full);
       }
     }
   };
@@ -5462,6 +5492,7 @@ async function initializeWhatsAppClient() {
 
     logWwebjsSessionLayoutForDiagnostics();
     removeChromeDefaultProfileIfRequested();
+    removeStaleGoogleChromeTmpArtifacts();
     removeChromeProfileSingletonLocks(WWEBJS_AUTH_DIR);
 
     console.log('🔍 Calling client.initialize()...');
