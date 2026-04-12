@@ -918,6 +918,7 @@ function scheduleReconnect() {
       // Check if client still exists and has initialize method
       if (client && typeof client.initialize === 'function') {
         console.log('🔄 Initializing client for reconnection...');
+        removeChromeProfileSingletonLocks(WWEBJS_AUTH_DIR);
         await client.initialize().catch(initError => {
           isInitializing = false;
           throw new Error(`Failed to initialize client: ${initError.message}`);
@@ -1416,6 +1417,43 @@ client.on('message', async (message) => {
 const WWEBJS_AUTH_DIR = path.join(__dirname, '.wwebjs_auth');
 const WWEBJS_CACHE_DIR = path.join(__dirname, '.wwebjs_cache');
 const TEMP_DIR = path.join(__dirname, 'temp');
+
+/** Chrome leaves Singleton* locks in the profile; new Docker containers get a new hostname and refuse to start (Code 21). */
+const CHROME_SINGLETON_LOCK_NAMES = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie']);
+
+function removeChromeProfileSingletonLocks(rootDir) {
+  if (!rootDir || !fs.existsSync(rootDir)) return;
+  const removed = [];
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        walk(full);
+      } else if (CHROME_SINGLETON_LOCK_NAMES.has(ent.name)) {
+        try {
+          fs.unlinkSync(full);
+          removed.push(full);
+        } catch (e) {
+          console.warn(`⚠️ Could not remove Chrome lock file ${full}: ${e.message}`);
+        }
+      }
+    }
+  };
+  try {
+    walk(rootDir);
+    if (removed.length) {
+      console.log(`🧹 Removed ${removed.length} stale Chrome profile lock file(s) (Docker / container restart).`);
+    }
+  } catch (e) {
+    console.warn('removeChromeProfileSingletonLocks:', e.message);
+  }
+}
 
 let sessionToolsOperationInProgress = false;
 
@@ -5348,6 +5386,8 @@ async function initializeWhatsAppClient() {
   try {
     // Add a small delay to ensure any previous browser instances are fully closed
     await new Promise(resolve => setTimeout(resolve, 500));
+
+    removeChromeProfileSingletonLocks(WWEBJS_AUTH_DIR);
 
     console.log('🔍 Calling client.initialize()...');
 
