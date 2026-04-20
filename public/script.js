@@ -101,7 +101,7 @@ let selectedGroup = null;
 const DEFAULT_MERGED_DAYS = 30;
 
 /** Bump together with `script.js?v=` in index.html (cache bust). */
-const UI_SCRIPT_BUILD = 22;
+const UI_SCRIPT_BUILD = 23;
 console.info(`[WA-forwarder] UI build ${UI_SCRIPT_BUILD} · groups/attendance trace: filter console by [GROUPS_TRACE]`);
 
 /** Filter browser console by `[GROUPS_TRACE]` to follow group load + attendance resolution. */
@@ -982,9 +982,10 @@ socket.on('connect', function() {
     statusIndicator.className = 'status-indicator connected';
 });
 
-socket.on('disconnect', function() {
-    console.log('❌ Disconnected from server');
-    updateStatus('disconnected', 'Disconnected from server');
+socket.on('disconnect', function (reason) {
+    console.log('❌ Dashboard socket disconnected:', reason);
+    // Closing the tab only drops this browser’s link to the server; WhatsApp may still be running on the server (LocalAuth in .wwebjs_auth).
+    updateStatus('connecting', 'Dashboard offline (tab closed or network). WhatsApp often stays linked on the server — reopen this page or refresh.');
 });
 
 socket.on('connect_error', function(error) {
