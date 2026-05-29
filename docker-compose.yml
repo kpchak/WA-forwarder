@@ -2,8 +2,8 @@
 #
 # Before first run on the server:
 #   cp .env.example .env   # then edit .env
-#   mkdir -p wwebjs_auth logs
-#   # Copy WhatsApp session from your PC into ./wwebjs_auth/ (see README)
+#   mkdir -p .wwebjs_auth logs
+#   # Copy WhatsApp session from your PC into ./.wwebjs_auth/ (see README)
 #
 # Start:  docker compose up -d --build
 # Logs:   docker compose logs -f
@@ -29,5 +29,5 @@ services:
       TMPDIR: /app/temp
     volumes:
       # Persist WhatsApp session + logs on the host (survives rebuilds)
-      - ./wwebjs_auth:/app/.wwebjs_auth
+      - ./.wwebjs_auth:/app/.wwebjs_auth
       - ./logs:/app/logs

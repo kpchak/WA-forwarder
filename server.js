@@ -16,46 +16,6 @@ const cors = require('cors');
 const { google } = require('googleapis');
 const rateLimit = require('express-rate-limit');
 
-// Debug logging helper
-const DEBUG_LOG_PATH = path.join(__dirname, '.cursor', 'debug.log');
-function debugLog(location, message, data, hypothesisId) {
-  const logEntry = {
-    id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    timestamp: Date.now(),
-    location,
-    message,
-    data,
-    sessionId: 'debug-session',
-    runId: 'run1',
-    hypothesisId
-  };
-
-  // Write to file (primary method)
-  try {
-    const logDir = path.dirname(DEBUG_LOG_PATH);
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
-    fs.appendFileSync(DEBUG_LOG_PATH, JSON.stringify(logEntry) + '\n');
-  } catch (err) {
-    // Log error to console if file write fails
-    console.error('Debug log write error:', err.message);
-    console.error('Debug log path:', DEBUG_LOG_PATH);
-  }
-
-  // Also try HTTP endpoint (if fetch is available)
-  if (typeof fetch !== 'undefined') {
-    try {
-      fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(logEntry)
-      }).catch(() => { });
-    } catch (err) {
-      // Ignore fetch errors
-    }
-  }
-}
 
 const app = express();
 // Behind Nginx / Nginx Proxy Manager: correct client IP + rate-limit + X-Forwarded-For
@@ -1034,9 +994,6 @@ client.on('qr', (qr) => {
     qrLength: qr ? qr.length : 'null'
   });
 
-  // #region agent log
-  debugLog('server.js:338', 'QR code event fired', { isClientReady, firstReadyProcessed, firstAuthenticatedProcessed, qrLength: qr ? qr.length : 'null' }, 'D');
-  // #endregion
 
   // CRITICAL: If client is already ready and authenticated, ignore QR code
   // QR code generation after authentication suggests WhatsApp is trying to re-authenticate
@@ -1046,9 +1003,6 @@ client.on('qr', (qr) => {
     console.error('❌ This suggests WhatsApp is trying to re-authenticate, which is suspicious');
     console.error('❌ IGNORING QR code to prevent triggering WhatsApp security detection');
     console.error('🔍 State check:', { isClientReady, firstReadyProcessed, firstAuthenticatedProcessed });
-    // #region agent log
-    debugLog('server.js:352', 'QR code ignored - already authenticated', { isClientReady, firstReadyProcessed, firstAuthenticatedProcessed }, 'D');
-    // #endregion
     return; // CRITICAL: Ignore QR codes if client is already authenticated
   }
 
@@ -1150,9 +1104,6 @@ client.on('authenticated', () => {
   });
   console.log('✅ ========================================');
 
-  // #region agent log
-  debugLog('server.js:470', 'authenticated event fired', { eventCount: authenticatedEventCount, firstAuthenticatedProcessed, lastAuthenticatedTime, timeSinceLast: lastAuthenticatedTime ? now - lastAuthenticatedTime : null, isClientReady }, 'E');
-  // #endregion
 
   // CRITICAL: If we've already processed an authenticated event, ignore ALL subsequent ones
   // This prevents multiple authenticated events from triggering multiple ready events
@@ -1162,9 +1113,6 @@ client.on('authenticated', () => {
     console.error(`❌ CRITICAL: Authenticated event #${authenticatedEventCount} fired but already authenticated!`);
     console.error(`❌ Time since first authenticated: ${timeSinceFirst}ms`);
     console.error('❌ IGNORING this duplicate authenticated event to prevent WhatsApp security detection');
-    // #region agent log
-    debugLog('server.js:479', 'Duplicate authenticated event ignored', { timeSinceFirst }, 'E');
-    // #endregion
     return; // CRITICAL: Ignore ALL authenticated events after the first one
   }
 
@@ -1173,9 +1121,6 @@ client.on('authenticated', () => {
   if (lastAuthenticatedTime && (now - lastAuthenticatedTime) < AUTHENTICATED_DEBOUNCE) {
     console.warn(`⚠️ Duplicate authenticated event detected (${authenticatedEventCount} total, ${now - lastAuthenticatedTime}ms since last)`);
     console.warn('⚠️ Ignoring duplicate to prevent multiple ready events');
-    // #region agent log
-    debugLog('server.js:487', 'Authenticated event debounced', { timeSinceLast: now - lastAuthenticatedTime }, 'E');
-    // #endregion
     return; // Ignore duplicate authenticated events
   }
 
@@ -1202,18 +1147,12 @@ client.on('auth_failure', (msg) => {
   authFailureCount++;
   lastAuthFailureTime = failureTime;
 
-  // #region agent log
-  debugLog('server.js:505', 'auth_failure event fired', { message: msg, failureCount: authFailureCount, timeSinceLastFailure: lastAuthFailureTime ? failureTime - lastAuthFailureTime : null }, 'F');
-  // #endregion
 
   const errorMsg = String(msg || '').toLowerCase();
   const isLinkDeviceError = errorMsg.includes('link device') ||
     errorMsg.includes('try again later') ||
     errorMsg.includes('could not link');
 
-  // #region agent log
-  debugLog('server.js:512', 'Auth failure analysis', { isLinkDeviceError, errorMsg }, 'F');
-  // #endregion
 
   console.error('❌ ========================================');
   console.error('❌ Authentication failed:', msg);
@@ -1270,9 +1209,6 @@ client.on('disconnected', (reason) => {
   console.log('⚠️ Disconnect reason details:', JSON.stringify(reason, null, 2));
   console.log(`⚠️ Ready events fired before disconnect: ${readyEventCount}`);
 
-  // #region agent log
-  debugLog('server.js:596', 'disconnected event fired', { reason: String(reason), reasonType: typeof reason, isClientReady, readyEventCount, authenticatedEventCount, timeSinceReady: client._readyTime ? Date.now() - client._readyTime : null }, 'G');
-  // #endregion
 
   // If multiple ready events occurred, this might be the cause of LOGOUT
   const previousReadyCount = readyEventCount;
@@ -3024,29 +2960,9 @@ app.post('/groups/:groupName/send', apiLimiter, async (req, res) => {
   try {
     const groupName = req.params.groupName;
 
-    // #region agent log
-    try {
-      const fs = require('fs');
-      const logPath = '.cursor/debug.log';
-      const logEntry = JSON.stringify({ location: 'server.js:2225', message: 'POST /groups/:groupName/send: request received', data: { groupName, isClientReady, selectedPhones: req.body.selectedPhones, selectedPhonesCount: Array.isArray(req.body.selectedPhones) ? req.body.selectedPhones.length : 'N/A', hasMessage: !!req.body.message, hasMediaUrl: !!req.body.mediaUrl }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) + '\n';
-      fs.appendFileSync(logPath, logEntry);
-    } catch (logErr) {
-      console.error('Debug log error:', logErr.message);
-    }
-    // #endregion
 
     // Check if client is ready before processing
     if (!isClientReady) {
-      // #region agent log
-      try {
-        const fs = require('fs');
-        const logPath = '.cursor/debug.log';
-        const logEntry2 = JSON.stringify({ location: 'server.js:2230', message: 'POST /groups/:groupName/send: client not ready - rejecting', data: { groupName, isClientReady }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) + '\n';
-        fs.appendFileSync(logPath, logEntry2);
-      } catch (logErr) {
-        console.error('Debug log error:', logErr.message);
-      }
-      // #endregion
       console.error(`❌ [SEND] Client not ready when trying to send to group: ${groupName}`);
       return res.status(400).json({
         success: false,
@@ -3054,16 +2970,6 @@ app.post('/groups/:groupName/send', apiLimiter, async (req, res) => {
       });
     }
 
-    // #region agent log
-    try {
-      const fs = require('fs');
-      const logPath = '.cursor/debug.log';
-      const logEntry = JSON.stringify({ location: 'server.js:2238', message: 'POST /groups/:groupName/send: received selectedPhones', data: { groupName, selectedPhones: req.body.selectedPhones, selectedPhonesType: typeof req.body.selectedPhones, selectedPhonesIsArray: Array.isArray(req.body.selectedPhones), selectedPhonesLength: Array.isArray(req.body.selectedPhones) ? req.body.selectedPhones.length : 'N/A' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) + '\n';
-      fs.appendFileSync(logPath, logEntry);
-    } catch (logErr) {
-      console.error('Debug log error:', logErr.message);
-    }
-    // #endregion
     const result = await sendGroupMessageInternal(groupName, {
       message: req.body.message,
       mediaUrl: req.body.mediaUrl,
@@ -4657,33 +4563,12 @@ async function sendGroupMessageInternal(groupName, options = {}) {
 
     let customersToMessage = group.customers;
     if (selectedPhones && Array.isArray(selectedPhones) && selectedPhones.length > 0) {
-      // #region agent log
-      try {
-        const fs = require('fs');
-        const logPath = '.cursor/debug.log';
-        const sampleCustomerPhones = group.customers.slice(0, 3).map(c => c.phone);
-        const logEntry = JSON.stringify({ location: 'server.js:3794', message: 'sendGroupMessageInternal: BEFORE filtering', data: { selectedPhonesCount: selectedPhones.length, selectedPhonesSample: selectedPhones.slice(0, 3), totalCustomers: group.customers.length, sampleCustomerPhones }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'E' }) + '\n';
-        fs.appendFileSync(logPath, logEntry);
-      } catch (logErr) {
-        console.error('Debug log error:', logErr.message);
-      }
-      // #endregion
       // Normalize phone numbers for comparison (remove @c.us/@g.us and non-digits)
       const selectedPhonesClean = selectedPhones.map(phone => phone.replace(/\D/g, ''));
       customersToMessage = group.customers.filter(customer => {
         const customerPhoneClean = customer.phone.replace(/\D/g, '');
         return selectedPhonesClean.includes(customerPhoneClean);
       });
-      // #region agent log
-      try {
-        const fs = require('fs');
-        const logPath = '.cursor/debug.log';
-        const logEntry2 = JSON.stringify({ location: 'server.js:3798', message: 'sendGroupMessageInternal: AFTER filtering', data: { filteredCount: customersToMessage.length, selectedPhonesCount: selectedPhones.length, selectedPhonesClean: selectedPhonesClean.slice(0, 3), matchedPhones: customersToMessage.slice(0, 3).map(c => c.phone) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'E' }) + '\n';
-        fs.appendFileSync(logPath, logEntry2);
-      } catch (logErr) {
-        console.error('Debug log error:', logErr.message);
-      }
-      // #endregion
       console.log(`Filtering to ${customersToMessage.length} selected customers out of ${group.customers.length} total`);
     }
 
@@ -5137,10 +5022,13 @@ function loadScheduledMessages() {
 }
 
 function saveScheduledMessages() {
+  const tmp = SCHEDULE_FILE_PATH + '.tmp';
   try {
-    fs.writeFileSync(SCHEDULE_FILE_PATH, JSON.stringify(scheduledMessages, null, 2), 'utf-8');
+    fs.writeFileSync(tmp, JSON.stringify(scheduledMessages, null, 2), 'utf-8');
+    fs.renameSync(tmp, SCHEDULE_FILE_PATH);
   } catch (error) {
     console.error('[SCHEDULE] Error saving scheduled messages:', error);
+    try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ }
   }
 }
 
@@ -5468,9 +5356,6 @@ async function initializeWhatsAppClient() {
     firstAuthenticatedProcessed
   });
 
-  // #region agent log
-  debugLog('server.js:4476', 'Starting client initialization', { isClientReady, isInitializing, clientInitialized, firstReadyProcessed, firstAuthenticatedProcessed }, 'A');
-  // #endregion
   isInitializing = true;
   clientInitialized = true;
 
@@ -5549,9 +5434,6 @@ async function initializeWhatsAppClient() {
       checkStateFallback(10000, 'init+10s');
       checkStateFallback(30000, 'init+30s');
 
-      // #region agent log
-      debugLog('server.js:4520', 'client.initialize() resolved', { sessionExists }, 'A');
-      // #endregion
       // isInitializing will be set to false in ready event
     }).catch((error) => {
       clearTimeout(initTimeout);
