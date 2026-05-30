@@ -1,9 +1,0 @@
-{
-  "compilerOptions": {
-    "skipLibCheck": true,
-    "noEmit": true,
-    "allowJs": true
-  },
-  "include": ["server.js", "public/**/*"],
-  "exclude": ["node_modules"]
-}
