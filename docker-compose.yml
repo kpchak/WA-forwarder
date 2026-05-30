@@ -2,7 +2,7 @@
 #
 # Before first run on the server:
 #   cp .env.example .env   # then edit .env
-#   mkdir -p .wwebjs_auth logs
+#   mkdir -p .wwebjs_auth .wwebjs_cache logs
 #   # Copy WhatsApp session from your PC into ./.wwebjs_auth/ (see README)
 #
 # Start:  docker compose up -d --build
@@ -28,6 +28,7 @@ services:
       # Keep Chromium temp under /app (writable, consistent). Code 21 locks live under .wwebjs_auth/session.
       TMPDIR: /app/temp
     volumes:
-      # Persist WhatsApp session + logs on the host (survives rebuilds)
+      # Persist WhatsApp session, cache, and logs on the host (survives rebuilds)
       - ./.wwebjs_auth:/app/.wwebjs_auth
+      - ./.wwebjs_cache:/app/.wwebjs_cache
       - ./logs:/app/logs
