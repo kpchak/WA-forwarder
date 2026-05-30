@@ -16,11 +16,20 @@ echo "────────────────────────�
 # ── 1. System packages ──────────────────────────────────
 echo "[1/8] Installing system packages..."
 apt-get update -qq
+UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "0")
+if awk "BEGIN {exit !($UBUNTU_VERSION >= 24.04)}"; then
+  LIBASOUND="libasound2t64"
+  LIBGCC="libgcc-s1"
+else
+  LIBASOUND="libasound2"
+  LIBGCC="libgcc1"
+fi
+
 apt-get install -y -qq \
   curl git nginx certbot python3-certbot-nginx \
-  fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \
+  fonts-liberation $LIBASOUND libatk-bridge2.0-0 libatk1.0-0 \
   libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 \
-  libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 \
+  libfontconfig1 libgbm1 $LIBGCC libglib2.0-0 libgtk-3-0 \
   libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 \
   libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
   libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 \
