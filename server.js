@@ -3785,6 +3785,13 @@ io.on('connection', (socket) => {
   // If already connected, also emit clientReady so UI fully updates (e.g. after page refresh)
   if (isClientReady) {
     socket.emit('clientReady', { status: 'connected', message: 'WhatsApp client is ready!', timestamp: new Date().toISOString() });
+  } else if (qrCodeData) {
+    // Re-send pending QR code to newly connected browser (e.g. after page refresh)
+    QRCode.toDataURL(qrCodeData, (err, url) => {
+      if (!err) {
+        socket.emit('qrCode', { qrData: qrCodeData, qrImage: url });
+      }
+    });
   }
 
   // Handle session clear request
