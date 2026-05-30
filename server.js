@@ -3174,22 +3174,19 @@ app.put('/schedules/:scheduleId', largeJsonBody, async (req, res) => {
     existingSchedule.startTime = value.startTime;
     existingSchedule.endDate = value.endDate;
     existingSchedule.endTime = value.endTime;
-    existingSchedule.timezone = value.timezone;
+    existingSchedule.timezone = value.timezone || existingSchedule.timezone;
     existingSchedule.status = 'active';
     existingSchedule.lastError = null;
     existingSchedule.updatedAt = new Date().toISOString();
 
     const nextRun = computeNextRunForSchedule(existingSchedule);
-    if (!nextRun) {
-      return res.status(400).json({
-        success: false,
-        error: 'Schedule configuration does not produce a run within the selected window'
-      });
+    if (nextRun) {
+      existingSchedule.nextRun = nextRun.toISOString();
+    } else {
+      existingSchedule.nextRun = null;
+      existingSchedule.status = 'completed';
     }
 
-    existingSchedule.nextRun = nextRun.toISOString();
-
-    scheduledMessages[scheduleIndex] = existingSchedule;
     saveScheduledMessages();
     processScheduledMessages().catch(err => console.error('[SCHEDULE] Immediate scheduler run error:', err));
 
@@ -3218,11 +3215,10 @@ app.delete('/schedules/:scheduleId', (req, res) => {
       return res.status(404).json({ success: false, error: 'Schedule not found' });
     }
 
-    scheduledMessages.splice(scheduleIndex, 1);
+    const [removedSchedule] = scheduledMessages.splice(scheduleIndex, 1);
     saveScheduledMessages();
 
-    res.json({ success: true });
-    processScheduledMessages().catch(err => console.error('[SCHEDULE] Immediate scheduler run error:', err));
+    res.json({ success: true, scheduleId: removedSchedule.id });
   } catch (error) {
     console.error('[SCHEDULE] Error deleting schedule:', error);
     res.status(500).json({
@@ -5571,89 +5567,3 @@ app.get('/schedules', async (req, res) => {
   }
 });
 
-// Update an existing schedule
-app.put('/schedules/:scheduleId', largeJsonBody, async (req, res) => {
-  try {
-    const scheduleId = req.params.scheduleId;
-    const scheduleIndex = scheduledMessages.findIndex(schedule => schedule.id === scheduleId);
-
-    if (scheduleIndex === -1) {
-      return res.status(404).json({ success: false, error: 'Schedule not found' });
-    }
-
-    const existingSchedule = scheduledMessages[scheduleIndex];
-    await ensureGroupData();
-    const group = customerGroups[existingSchedule.groupName];
-    if (!group) {
-      return res.status(404).json({ success: false, error: 'Group not found' });
-    }
-
-    const validation = validateSchedulePayload(group, req.body, existingSchedule, { requireFutureStart: false });
-    if (validation.error) {
-      return res.status(400).json({ success: false, error: validation.error });
-    }
-
-    const value = validation.value;
-
-    existingSchedule.message = value.message;
-    existingSchedule.mediaUrl = value.mediaUrl;
-    existingSchedule.mediaType = value.mediaType;
-    existingSchedule.mediaFilename = value.mediaFilename;
-    existingSchedule.hasMedia = value.hasMedia;
-    existingSchedule.targetScope = value.targetScope;
-    existingSchedule.selectedPhones = value.targetScope === 'selected' ? value.selectedPhones : [];
-    existingSchedule.recurrenceType = value.recurrenceType;
-    existingSchedule.weekdays = value.weekdays;
-    existingSchedule.monthlyDay = value.monthlyDay;
-    existingSchedule.startDate = value.startDate;
-    existingSchedule.startTime = value.startTime;
-    existingSchedule.endDate = value.endDate;
-    existingSchedule.endTime = value.endTime;
-    existingSchedule.timezone = value.timezone || existingSchedule.timezone;
-    existingSchedule.updatedAt = new Date().toISOString();
-    existingSchedule.status = 'active';
-    existingSchedule.lastError = null;
-
-    const nextRun = computeNextRunForSchedule(existingSchedule);
-    if (nextRun) {
-      existingSchedule.nextRun = nextRun.toISOString();
-    } else {
-      existingSchedule.nextRun = null;
-      existingSchedule.status = 'completed';
-    }
-
-    saveScheduledMessages();
-
-    processScheduledMessages().catch(err => console.error('[SCHEDULE] Scheduler run error after update:', err));
-
-    res.json({
-      success: true,
-      scheduleId: existingSchedule.id,
-      nextRun: existingSchedule.nextRun,
-      status: existingSchedule.status
-    });
-  } catch (error) {
-    console.error('[SCHEDULE] Error updating schedule:', error);
-    res.status(500).json({ success: false, error: 'Failed to update schedule', details: error.message });
-  }
-});
-
-// Delete a schedule
-app.delete('/schedules/:scheduleId', (req, res) => {
-  try {
-    const scheduleId = req.params.scheduleId;
-    const scheduleIndex = scheduledMessages.findIndex(schedule => schedule.id === scheduleId);
-
-    if (scheduleIndex === -1) {
-      return res.status(404).json({ success: false, error: 'Schedule not found' });
-    }
-
-    const [removedSchedule] = scheduledMessages.splice(scheduleIndex, 1);
-    saveScheduledMessages();
-
-    res.json({ success: true, scheduleId: removedSchedule.id });
-  } catch (error) {
-    console.error('[SCHEDULE] Error deleting schedule:', error);
-    res.status(500).json({ success: false, error: 'Failed to delete schedule', details: error.message });
-  }
-});
