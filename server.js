@@ -971,6 +971,8 @@ function forceClientReady(source) {
     reconnectTimeout = null;
   }
   reconnectAttempts = 0;
+  qrCodeData = null;
+  lastQRCodeEmitted = null;
 
   io.emit('clientReady', {
     message: 'WhatsApp client is ready!',
@@ -3843,15 +3845,6 @@ io.on('connection', (socket) => {
       socket.emit('sessionCleared', { success: false, error: error.message });
     }
   });
-
-  // If QR code is available, send it
-  if (qrCodeData) {
-    QRCode.toDataURL(qrCodeData, (err, url) => {
-      if (!err) {
-        socket.emit('qrCode', { qrData: qrCodeData, qrImage: url });
-      }
-    });
-  }
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
