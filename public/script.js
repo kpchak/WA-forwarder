@@ -3206,10 +3206,6 @@ function displayGroupRecipients(group) {
     updateRecipientCount();
     
     console.log(`Displayed ${group.customers.length} recipients for group: ${group.name}`);
-    // #region agent log
-    const customerPhones = group.customers.map(c => c.phone);
-    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2928',message:'displayGroupRecipients: customer phone values set in checkboxes',data:{groupName:group.name,customerCount:group.customers.length,customerPhones:customerPhones.slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
 }
 
 function updateRecipientSelection(checkbox, itemDiv) {
@@ -3268,21 +3264,8 @@ async function sendGroupMessage() {
     }
     
     // Collect selected recipients
-    // #region agent log
-    const recipientsListExists = recipientsList !== null;
-    const recipientsListChildren = recipientsList ? recipientsList.children.length : 0;
-    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2987',message:'sendGroupMessage: BEFORE collecting checkboxes',data:{recipientsListExists,recipientsListChildren,selectedGroup},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     const selectedCheckboxes = recipientsList.querySelectorAll('input[type="checkbox"]:checked');
-    // #region agent log
-    const checkboxCount = selectedCheckboxes.length;
-    const allCheckboxes = recipientsList ? recipientsList.querySelectorAll('input[type="checkbox"]').length : 0;
-    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2988',message:'sendGroupMessage: checkboxes found',data:{checkedCount:checkboxCount,totalCheckboxes:allCheckboxes},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     const selectedPhones = Array.from(selectedCheckboxes).map(cb => cb.value);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2989',message:'sendGroupMessage: selectedPhones collected',data:{selectedPhonesCount:selectedPhones.length,selectedPhones:selectedPhones.slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     
     if (selectedPhones.length === 0) {
         showNotification('Please select at least one recipient', 'error');
@@ -3293,10 +3276,7 @@ async function sendGroupMessage() {
         sendGroupMessageBtn.disabled = true;
         sendGroupMessageBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
         
-        // #region agent log
         const requestBody = {message,mediaUrl,selectedPhones};
-        fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2999',message:'sendGroupMessage: sending request',data:{groupName:selectedGroup,selectedPhonesCount:selectedPhones.length,selectedPhones:selectedPhones.slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
         const response = await fetch(`/groups/${selectedGroup}/send`, {
             method: 'POST',
             headers: {
@@ -3305,13 +3285,7 @@ async function sendGroupMessage() {
             body: JSON.stringify(requestBody)
         });
         
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:3028',message:'sendGroupMessage: response received',data:{status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
         const data = await response.json();
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/7d449c47-fd4f-4dea-b503-6982bd8293da',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:3029',message:'sendGroupMessage: response data',data:{success:data.success,successCount:data.successCount,error:data.error,errorCount:data.errorCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
         
         if (data.success) {
             displayGroupMessageResults(data);
