@@ -4655,6 +4655,13 @@ async function sendGroupMessageInternal(groupName, options = {}) {
             if (errorMsg.includes('markedUnread') || errorMsg.includes('sendSeen')) {
               console.warn(`⚠️ ignoring sendSeen error, proceeding to verification...`);
               sendSuccess = true;
+            } else if (errorMsg.includes('Lid is missing') || errorMsg.includes('lid')) {
+              // WhatsApp "Lid is missing in chat table" — fall back to client.sendMessage
+              // which uses a different internal path that doesn't require the lid entry.
+              console.warn(`⚠️ Lid missing for ${customer.name}, retrying via client.sendMessage...`);
+              await client.sendMessage(chatId, personalizedMessage);
+              sendSuccess = true;
+              console.log(`✅ Fallback client.sendMessage succeeded for ${customer.name}`);
             } else {
               throw sendError; // Re-throw other errors
             }
@@ -5233,7 +5240,14 @@ process.on('unhandledRejection', (reason, promise) => {
   // Ignore LocalWebCache.persist errors - we've disabled webCache
   if (errorMsg.includes('LocalWebCache') || errorMsg.includes('Cannot read properties of null') || errorStack.includes('LocalWebCache')) {
     console.warn('⚠️ Ignoring LocalWebCache error (webCache is disabled):', errorMsg);
-    return; // Don't crash on this known issue
+    return;
+  }
+
+  // Ignore EBUSY lockfile errors from LocalAuth on Windows — Chromium holds the
+  // lockfile while running; the unlink in LocalAuth.logout() fails harmlessly.
+  if (errorMsg.includes('EBUSY') && errorMsg.includes('lockfile')) {
+    console.warn('⚠️ Ignoring EBUSY lockfile error from LocalAuth (expected on Windows):', errorMsg);
+    return;
   }
 
   console.error('❌ [CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
