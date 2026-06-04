@@ -7,6 +7,36 @@ if (fs.existsSync(envLocalPath)) {
   require('dotenv').config({ path: envLocalPath, override: true });
 }
 
+// Must run BEFORE require('whatsapp-web.js') because Puppeteer caches PUPPETEER_EXECUTABLE_PATH
+// at module-load time. Deleting it afterwards (post-require) has no effect.
+(function sanitizePuppeteerEnvPaths() {
+  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH?.trim();
+  if (!fromEnv) return;
+
+  const isWindowsPath = /^[A-Za-z]:[/\\]/.test(fromEnv);
+  const isLinux = process.platform !== 'win32';
+  const pathInvalid = !fs.existsSync(fromEnv) || (isWindowsPath && isLinux);
+
+  if (!pathInvalid) return;
+
+  if (isWindowsPath && isLinux) {
+    console.warn(
+      `[WA-forwarder] PUPPETEER_EXECUTABLE_PATH is a Windows path (${fromEnv}) but this is Linux. ` +
+      'Unsetting it — remove .env.local from the server or set the correct Linux Chrome path inside it.'
+    );
+  } else {
+    console.warn(
+      `[WA-forwarder] PUPPETEER_EXECUTABLE_PATH not found (${fromEnv}). Unsetting it so Puppeteer can use a default browser. ` +
+      'Use .env.local for machine-specific Chrome (see .env.example), or set PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false and run npm install.'
+    );
+  }
+  delete process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true') {
+    console.warn('[WA-forwarder] Unsetting PUPPETEER_SKIP_CHROMIUM_DOWNLOAD for this run.');
+    delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
+  }
+})();
+
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -115,37 +145,6 @@ if (isProduction) {
 // cannot drift ahead of whatsapp-web.js (fixes fetchMessages / waitForChatLoading-style failures).
 // Override with WWEBJS_WEB_VERSION when wppconnect adds a newer compatible build.
 const WWEBJS_WEB_VERSION = process.env.WWEBJS_WEB_VERSION || '2.3000.1036930770-alpha';
-
-// whatsapp-web.js / Puppeteer also read PUPPETEER_* from process.env internally.
-// Unset any path that either doesn't exist on this OS or is a Windows path running on Linux.
-(function sanitizePuppeteerEnvPaths() {
-  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH?.trim();
-  if (!fromEnv) return;
-
-  const isWindowsPath = /^[A-Za-z]:[/\\]/.test(fromEnv);
-  const isLinux = process.platform !== 'win32';
-  const pathInvalid = !fs.existsSync(fromEnv) || (isWindowsPath && isLinux);
-
-  if (!pathInvalid) return;
-
-  if (isWindowsPath && isLinux) {
-    console.warn(
-      `[WA-forwarder] PUPPETEER_EXECUTABLE_PATH is a Windows path (${fromEnv}) but this is Linux. ` +
-      'Unsetting it — remove .env.local from the server or set the correct Linux Chrome path inside it.'
-    );
-  } else {
-    console.warn(
-      `[WA-forwarder] PUPPETEER_EXECUTABLE_PATH not found (${fromEnv}). Unsetting it so Puppeteer can use a default browser. ` +
-      'Use .env.local for machine-specific Chrome (see .env.example), or set PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false and run npm install.'
-    );
-  }
-  delete process.env.PUPPETEER_EXECUTABLE_PATH;
-  // Docker .env often sets SKIP=true; on a dev PC that usually means no downloaded Chromium — unset for this process
-  if (process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true') {
-    console.warn('[WA-forwarder] Unsetting PUPPETEER_SKIP_CHROMIUM_DOWNLOAD for this run.');
-    delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
-  }
-})();
 
 const puppeteerExecutablePath = process.env.PUPPETEER_EXECUTABLE_PATH?.trim() || undefined;
 
