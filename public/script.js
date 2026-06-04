@@ -1,7 +1,7 @@
 // Version check - if you see this, new script is loaded!
 console.log('🚀 SCRIPT.JS VERSION 3.0 LOADED - Cache busting active!');
 console.log('🔌 Initializing Socket.IO connection...');
-const socket = io();
+const socket = io({ transports: ['websocket'] });
 
 // Test if page is loading
 console.log('📄 Script.js loaded successfully!');
