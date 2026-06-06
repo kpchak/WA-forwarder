@@ -1,534 +1,530 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Message Viewer</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
-    <link rel="stylesheet" href="style.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WA Customer Manager</title>
+  <link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1><i class="fab fa-whatsapp"></i> WhatsApp Message Viewer</h1>
-            <p>Connect your WhatsApp and view messages for any phone number</p>
-        </header>
+<div class="app">
 
-        <div class="main-content">
-            <!-- Navigation Menu -->
-            <div class="nav-menu">
-                <button class="nav-btn active" data-section="status">
-                    <i class="fas fa-home"></i> <span class="nav-btn-text">Home</span>
-                </button>
-                <button class="nav-btn" data-section="groups">
-                    <i class="fas fa-users"></i> <span class="nav-btn-text">Customer Groups</span>
-                </button>
-                <button class="nav-btn" data-section="messages">
-                    <i class="fas fa-comments"></i> <span class="nav-btn-text">Messages</span>
-                </button>
-            </div>
+  <!-- Header -->
+  <header class="header">
+    <h1>📋 WA Customer Manager</h1>
+    <div class="status-badge">
+      <span class="status-dot stopped" id="statusDot"></span>
+      <span id="statusText">Connecting…</span>
+    </div>
+  </header>
 
-            <!-- Connection Status -->
-            <div class="status-card" id="statusCard">
-                <div class="status-indicator" id="statusIndicator">
-<i class="fas fa-circle"></i>
-                    <span id="statusText">Connecting...</span>
-                </div>
-                <div id="sessionNote" style="display: none; margin-top: 10px; padding: 10px; background: #e7f3ff; border: 1px solid #2196F3; border-radius: 5px; font-size: 0.9rem;">
-                    <i class="fas fa-info-circle"></i> <strong>Note:</strong> On Railway, you may need to scan QR code again after page refresh. Session persistence requires Railway Volumes (Pro plan).
-                </div>
-            </div>
+  <!-- Tab bar -->
+  <nav class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="connect"    role="tab">🔗 Connect</button>
+    <button class="tab-btn"        data-tab="groups"     role="tab" disabled>👥 Groups</button>
+    <button class="tab-btn"        data-tab="messages"   role="tab" disabled>📨 Messages</button>
+    <button class="tab-btn"        data-tab="send"       role="tab" disabled>✉️ Send</button>
+    <button class="tab-btn"        data-tab="schedule"   role="tab" disabled>📅 Schedule</button>
+    <button class="tab-btn"        data-tab="attendance" role="tab" disabled>✅ Attendance</button>
+  </nav>
 
-            <div class="session-tools-card home-tab-only" id="sessionToolsCard" style="display: none;">
-                <h3 class="session-tools-title"><i class="fas fa-toolbox"></i> Session &amp; cache</h3>
-                <p class="session-tools-disabled-msg" id="sessionToolsDisabledMsg" style="display: none;"></p>
-                <div id="sessionToolsActions">
-                    <div class="session-tools-key-row" id="sessionToolsKeyRow" style="display: none;">
-                        <label for="sessionToolsAdminKey" class="session-tools-label">Admin key</label>
-                        <input type="password" id="sessionToolsAdminKey" class="session-tools-key-input" placeholder="Matches ADMIN_SECRET on server" autocomplete="off" />
-                    </div>
-                    <div class="session-tools-buttons">
-                        <button type="button" id="clearCacheBtn" class="btn btn-warning" title="Removes .wwebjs_cache, temp/, and in-memory Sheets cache">
-                            <i class="fas fa-eraser"></i> Clear cache
-                        </button>
-                        <button type="button" id="clearSessionBtn" class="btn btn-danger" title="Logs out WhatsApp and deletes .wwebjs_auth — scan QR again">
-                            <i class="fas fa-unlink"></i> Clear session
-                        </button>
-                    </div>
-                    <p class="session-tools-footnote">Clear session deletes the saved WhatsApp login and restarts the client (new QR). Clear cache does not unlink WhatsApp. On production, set <code>ADMIN_SECRET</code> in server <code>.env</code> and enter it here.</p>
-                </div>
-            </div>
+  <!-- ── Connect tab ──────────────────────────────────────────────────────── -->
+  <div class="tab-panel active" id="tab-connect" role="tabpanel">
+    <div class="card">
+      <div class="connect-center" id="connectCenter">
 
-            <!-- QR Code Section -->
-            <div class="qr-section" id="qrSection" style="display: none;">
-                <h2>Scan QR Code with WhatsApp</h2>
-                <div class="qr-refresh-warning" id="qrRefreshWarning" style="display: none; background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 5px; margin-bottom: 15px; text-align: center;">
-                    <strong>⚠️ Quick!</strong> QR code expires in <span id="qrCountdown">20</span> seconds. Scan now!
-                </div>
-                <div class="qr-container">
-                    <div id="qrCode"></div>
-                </div>
-                <p class="qr-instructions">
-                    1. Open WhatsApp on your phone<br>
-                    2. Go to Settings > Linked Devices<br>
-                    3. Tap "Link a Device"<br>
-                    4. <strong>Quickly scan this QR code</strong> (expires in ~20 seconds)<br>
-                    5. QR code will refresh automatically if not scanned
-                </p>
-            </div>
-
-            <!-- Customer Groups Section -->
-            <div class="groups-section" id="groupsSection" style="display: none;">
-                <div class="groups-header">
-                    <h2>Customer Groups</h2>
-                    <div class="header-actions">
-                        <button id="loadGroupsBtn" class="btn btn-primary" title="Click to load from cache, double-click to refresh from Google Sheets">
-                            <i class="fas fa-sync"></i> Load from Google Sheets
-                        </button>
-                    </div>
-                </div>
-                <div class="groups-container" id="groupsContainer">
-                    <div class="loading" id="loadingGroups">
-                        <i class="fas fa-spinner fa-spin"></i> Loading groups...
-                    </div>
-                </div>
-            </div>
-
-            <!-- Group Message Section -->
-            <div class="group-message-section" id="groupMessageSection" style="display: none;">
-                <div class="group-message-header">
-                    <h2>Send Message to Group</h2>
-                    <button id="backToGroupsBtn" class="btn btn-secondary">
-                        <i class="fas fa-arrow-left"></i> Back to Groups
-                    </button>
-                </div>
-                <div class="group-message-form">
-                    <div class="form-group">
-                        <label>Recipients:</label>
-                        <div class="recipients-header">
-                            <div class="recipients-header-left">
-                                <button id="selectAllRecipientsBtn" class="btn btn-sm">
-                                    <i class="fas fa-check-square"></i> Select All
-                                </button>
-                                <button id="deselectAllRecipientsBtn" class="btn btn-sm">
-                                    <i class="fas fa-square"></i> Deselect All
-                                </button>
-                            </div>
-                            <div class="recipients-header-right">
-                                <span class="recipient-count-badge" id="recipientCountBadge">0 selected</span>
-                            </div>
-                        </div>
-                        <div class="recipients-list" id="recipientsList">
-                            <!-- Recipients will be displayed here -->
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="groupMessageInput">Message:</label>
-                        <div class="emoji-quick-buttons">
-                            <button type="button" class="emoji-btn" data-emoji="👍" title="Thumbs Up">👍</button>
-                            <button type="button" class="emoji-btn" data-emoji="👏" title="Clap">👏</button>
-                            <button type="button" class="emoji-btn" data-emoji="🙏" title="Thanks/Prayer">🙏</button>
-                            <button type="button" class="emoji-btn" data-emoji="☝" title="Point Up">☝</button>
-                            <button type="button" class="emoji-btn" data-emoji="👇" title="Point Down">👇</button>
-                        </div>
-                        <textarea id="groupMessageInput" placeholder="Enter your message here...&#10;&#10;Available placeholders:&#10;&lt;day of the week&gt; - e.g., Monday, Sunday&#10;&lt;date of month&gt; - e.g., 9, 15, 25&#10;&lt;date of month -1&gt; / &lt;date of month -2&gt; - e.g., one or two days before send date&#10;&lt;customer name&gt; - Customer's name from Google Sheets" rows="4"></textarea>
-                        <small style="display: block; margin-top: 5px; color: #666; font-size: 0.85rem;">
-                            <i class="fas fa-info-circle"></i> Tip: Use placeholders like <code>&lt;day of the week&gt;</code>, <code>&lt;date of month&gt;</code>, <code>&lt;date of month -1&gt;</code>, <code>&lt;date of month -2&gt;</code>, and <code>&lt;customer name&gt;</code> to personalize messages
-                        </small>
-                    </div>
-                    <div class="form-group">
-                        <label for="groupMediaInput">Media URL (optional):</label>
-                        <input type="url" id="groupMediaInput" placeholder="https://example.com/image.jpg">
-                    </div>
-                    <div class="form-actions">
-                        <button id="sendGroupMessageBtn" class="btn btn-success">
-                            <i class="fas fa-paper-plane"></i> Send to Selected
-                        </button>
-                        <button id="clearMessageBtn" class="btn btn-secondary">
-                            <i class="fas fa-eraser"></i> Clear Message
-                        </button>
-                        <button id="previewGroupBtn" class="btn btn-info">
-                            <i class="fas fa-eye"></i> Preview
-                        </button>
-                        <button type="button" id="saveDraftBtn" class="btn btn-outline-secondary" title="Save current message as draft (not sent)">
-                            <i class="fas fa-save"></i> Save as draft
-                        </button>
-                        <div class="draft-load-wrap" style="display: inline-flex; align-items: center; gap: 6px;">
-                            <label for="loadDraftSelect" style="margin: 0; font-size: 0.9rem;">Load draft:</label>
-                            <select id="loadDraftSelect" class="form-control" style="width: auto; min-width: 160px; display: inline-block;">
-                                <option value="">— Choose draft —</option>
-                            </select>
-                            <button type="button" id="deleteDraftBtn" class="btn btn-outline-danger btn-sm" title="Delete selected draft" style="display: none;">
-                                <i class="fas fa-trash-alt"></i>
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="form-group schedule-group">
-                        <div class="schedule-edit-status" id="scheduleEditStatus" style="display: none;"></div>
-                        <div class="schedule-toggle">
-                            <div class="schedule-toggle-header">
-                                <span class="schedule-toggle-title">
-                                    <i class="fas fa-calendar-alt"></i> Schedule this message
-                                </span>
-                                <div class="schedule-toggle-buttons">
-                                    <button type="button" id="showScheduleBtn" class="btn btn-outline-primary btn-sm">Show</button>
-                                    <button type="button" id="hideScheduleBtn" class="btn btn-outline-secondary btn-sm" style="display: none;">Hide</button>
-                                </div>
-                            </div>
-                            <small class="schedule-hint">Plan recurring deliveries for this group.</small>
-                        </div>
-                        <div class="schedule-options" id="scheduleOptions" style="display: none;">
-                            <div class="schedule-section">
-                                <label>Recipients</label>
-                                <div class="schedule-recipients">
-                                    <label><input type="radio" id="scheduleRecipientsSelected" name="scheduleRecipients" value="selected" checked> Use selected recipients</label>
-                                    <label><input type="radio" id="scheduleRecipientsAll" name="scheduleRecipients" value="all"> Entire group</label>
-                                </div>
-                            </div>
-                            <div class="schedule-section">
-                                <label>Recurrence</label>
-                                <div class="recurrence-options">
-                                    <label><input type="radio" name="scheduleRecurrence" value="once"> Once</label>
-                                    <label><input type="radio" name="scheduleRecurrence" value="daily" checked> Daily</label>
-                                    <label><input type="radio" name="scheduleRecurrence" value="weekly"> Weekly</label>
-                                    <label><input type="radio" name="scheduleRecurrence" value="monthly"> Monthly</label>
-                                </div>
-                                <div class="weekly-options" id="scheduleWeeklyOptions" style="display: none;">
-                                    <span class="weekly-label">Select weekdays:</span>
-                                    <div class="weekly-days">
-                                        <label><input type="checkbox" class="weekly-day-checkbox" value="1"> Mon</label>
-                                        <label><input type="checkbox" class="weekly-day-checkbox" value="2"> Tue</label>
-                                        <label><input type="checkbox" class="weekly-day-checkbox" value="3"> Wed</label>
-                                        <label><input type="checkbox" class="weekly-day-checkbox" value="4"> Thu</label>
-                                        <label><input type="checkbox" class="weekly-day-checkbox" value="5"> Fri</label>
-                                        <label><input type="checkbox" class="weekly-day-checkbox" value="6"> Sat</label>
-                                        <label><input type="checkbox" class="weekly-day-checkbox" value="0"> Sun</label>
-                                    </div>
-                                </div>
-                                <div class="monthly-options" id="scheduleMonthlyOptions" style="display: none;">
-                                    <label for="scheduleMonthlyDay">Day of month</label>
-                                    <input type="number" id="scheduleMonthlyDay" class="schedule-input" min="1" max="31">
-                                </div>
-                            </div>
-                            <div class="schedule-section schedule-datetime">
-                                <div class="schedule-row">
-                                    <div class="schedule-field">
-                                        <label for="scheduleStartDate">Start Date</label>
-                                        <input type="date" id="scheduleStartDate" class="schedule-input">
-                                    </div>
-                                    <div class="schedule-field">
-                                        <label for="scheduleStartTime">Start Time</label>
-                                        <input type="time" id="scheduleStartTime" class="schedule-input">
-                                    </div>
-                                </div>
-                                <div class="schedule-row" id="scheduleEndSection">
-                                    <div class="schedule-field">
-                                        <label for="scheduleEndDate">End Date</label>
-                                        <input type="date" id="scheduleEndDate" class="schedule-input">
-                                    </div>
-                                    <div class="schedule-field">
-                                        <label for="scheduleEndTime">End Time</label>
-                                        <input type="time" id="scheduleEndTime" class="schedule-input">
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="schedule-section">
-                                <label>Timezone</label>
-                                <select id="scheduleTimezone">
-                                    <option value="Asia/Calcutta" selected>Asia/Calcutta (IST)</option>
-                                    <option value="UTC">UTC</option>
-                                    <option value="America/New_York">America/New_York (EST)</option>
-                                    <option value="Europe/London">Europe/London (GMT)</option>
-                                </select>
-                            </div>
-                            <div class="schedule-actions">
-                                <div class="schedule-primary-actions">
-                                    <button type="button" id="scheduleMessageBtn" class="btn btn-primary">
-                                        <i class="fas fa-calendar-plus"></i> Schedule Message
-                                    </button>
-                                    <button type="button" id="manageSchedulesBtn" class="btn btn-info">
-                                        <i class="fas fa-list"></i> Manage Schedules
-                                    </button>
-                                </div>
-                                <button type="button" id="cancelScheduleEditBtn" class="btn btn-secondary" style="display: none;">
-                                    <i class="fas fa-times-circle"></i> Cancel Edit
-                                </button>
-                            </div>
-                            <div class="schedule-note">
-                                <i class="fas fa-clock"></i>
-                                <span>Dates and times use your local timezone.</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="scheduled-messages-container" id="scheduledMessagesContainer" style="display: none;">
-                        <div class="scheduled-messages-header">
-                            <h4 class="scheduled-messages-title"><i class="fas fa-calendar-check"></i> Scheduled Messages</h4>
-                            <button type="button" id="refreshSchedulesBtn" class="btn btn-secondary btn-sm">
-                                <i class="fas fa-sync"></i> Refresh
-                            </button>
-                        </div>
-                        <div class="scheduled-messages-list" id="scheduledMessagesList">
-                            <div class="scheduled-empty">No scheduled messages for this group yet.</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="group-message-results" id="groupMessageResults" style="display: none;">
-                    <!-- Results will be displayed here -->
-                </div>
-            </div>
-
-            <!-- Phone Number Input -->
-            <div class="phone-section" id="phoneSection" style="display: none;">
-                
-                <!-- View Toggle -->
-                <div class="view-toggle-container">
-                    <button id="toggleViewBtn" class="btn btn-outline-primary">
-                        <i class="fas fa-eye"></i> <span id="toggleViewText">Show Details View</span>
-                    </button>
-                </div>
-                
-                <!-- Merged Messages Header -->
-                <div class="messages-header" style="margin: 20px 0; padding-bottom: 15px; border-bottom: 2px solid #e9ecef;">
-                    <h2 style="margin: 0; color: #333; font-size: 1.5rem;">Merged Messages <span id="targetPhoneDisplay"></span></h2>
-                    <div class="header-actions" style="display: flex; flex-direction: row; align-items: center; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
-                        <!-- Customer Messages Toggle -->
-                        <button id="toggleCustomerMessagesBtn" class="btn btn-success" title="Toggle to show/hide your own messages">
-                            <i class="fas fa-users"></i> <span id="toggleCustomerMessagesText">Show All Messages</span>
-                        </button>
-                        <button id="copyTextBtn" class="btn btn-info">
-                            <i class="fas fa-copy"></i> Copy Text
-                        </button>
-                        <button id="refreshBtn" class="btn btn-secondary">
-                            <i class="fas fa-refresh"></i> Refresh
-                        </button>
-                        <button id="loadWithoutFiltersBtn" class="btn btn-warning" title="Load messages without any filters (use if you see 0 messages)">
-                            <i class="fas fa-ban"></i> Load Without Filters
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- Messages Container -->
-                <div class="messages-container" id="messagesContainer" style="margin-bottom: 20px;">
-                    <div class="loading" id="loadingMessages">
-                        <i class="fas fa-spinner fa-spin"></i> 
-                        <span class="loading-text">Loading messages...</span>
-                    </div>
-                    <div class="load-more-container" id="loadMoreContainer" style="display: none;">
-                        <button id="loadMoreBtn" class="btn btn-primary">
-                            <i class="fas fa-plus"></i> Load More Messages (Last 30 Days)
-                        </button>
-                        <div class="message-count-info" id="messageCountInfo"></div>
-                    </div>
-                </div>
-                <button id="scrollToBottom" class="scroll-to-bottom" style="display: none;">
-                    <i class="fas fa-arrow-down"></i>
-                </button>
-                
-                <!-- Filter Presets Management -->
-                <div class="filter-presets-section" style="margin-bottom: 20px; padding: 15px; background: #e7f3ff; border-radius: 8px; border: 1px solid #2196F3;">
-                    <h3 style="margin-top: 0; margin-bottom: 10px;"><i class="fas fa-bookmark"></i> Filter Presets</h3>
-                    <p style="margin-bottom: 15px; color: #666; font-size: 0.9rem;">Save your filter combinations (time, text, customer filters + phone numbers) for quick reuse.</p>
-                    <div class="preset-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <button id="saveFilterPresetBtn" class="btn btn-primary">
-                            <i class="fas fa-save"></i> Save Current Filter Preset
-                        </button>
-                        <button id="loadFilterPresetsBtn" class="btn btn-info">
-                            <i class="fas fa-folder-open"></i> Load Saved Filter Preset
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- Time Range Filter -->
-                <div class="time-filter-section">
-                    <h3><i class="fas fa-clock"></i> Time Range Filter</h3>
-                    
-                    <!-- Time Range Summary -->
-                    <div class="time-range-summary" id="timeRangeSummary" style="display: none;">
-                        <p class="summary-text" id="summaryText">No time filter applied</p>
-                        <p class="summary-details" id="summaryDetails">All messages will be shown</p>
-                    </div>
-                    
-                    <!-- Quick Presets -->
-                    <div class="time-presets">
-                        <h4><i class="fas fa-bolt"></i> Quick Presets</h4>
-                        <div class="preset-buttons">
-                            <button class="preset-btn" data-preset="today">Today</button>
-                            <button class="preset-btn" data-preset="yesterday">Yesterday</button>
-                            <button class="preset-btn" data-preset="last7days">Last 7 Days</button>
-                            <button class="preset-btn" data-preset="lastmonth">Last Month</button>
-                            <button class="preset-btn" data-preset="thisweek">This Week</button>
-                            <button class="preset-btn" data-preset="lastweek">Last Week</button>
-                            <button class="preset-btn" data-preset="thismonth">This Month</button>
-                            <button class="preset-btn" data-preset="custom">Custom Range</button>
-                        </div>
-                    </div>
-                    
-                    <div class="time-filter-controls">
-                        <div class="date-time-group">
-                            <label><i class="fas fa-calendar-plus"></i> From Date & Time</label>
-                            <input type="date" id="fromDate" class="date-input" title="Select start date">
-                            <div class="time-slider-container">
-                                <label>Time: <span id="fromTimeDisplay" class="time-display">00:00</span></label>
-                                <input type="range" id="fromTimeSlider" min="0" max="1439" value="0" class="time-slider" title="Select start time">
-                            </div>
-                        </div>
-                        
-                        <div class="date-time-group">
-                            <label><i class="fas fa-calendar-minus"></i> To Date & Time</label>
-                            <input type="date" id="toDate" class="date-input" title="Select end date">
-                            <div class="time-slider-container">
-                                <label>Time: <span id="toTimeDisplay" class="time-display">23:59</span></label>
-                                <input type="range" id="toTimeSlider" min="0" max="1439" value="1439" class="time-slider" title="Select end time">
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="filter-actions">
-                        <button id="applyTimeFilter" class="btn btn-primary">
-                            <i class="fas fa-filter"></i> Apply Time Filter
-                        </button>
-                        <button id="clearTimeFilter" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear Filter
-                        </button>
-                        <button id="resetTimeFilter" class="btn btn-info">
-                            <i class="fas fa-undo"></i> Reset to Default
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- Select Contacts & Groups (Always visible in Basic View) -->
-                <div class="select-contacts-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
-                    <h3 style="margin-top: 0; margin-bottom: 15px;"><i class="fas fa-users"></i> Select Contacts & Groups</h3>
-                    
-                    <!-- Chat Selector -->
-                    <div class="chat-selector">
-                        <button id="loadChatsBtn" class="btn btn-info">
-                            <i class="fas fa-list"></i> Load All Chats
-                        </button>
-                        <div class="chat-filters">
-                            <button id="showAllBtn" class="filter-btn active">All</button>
-                            <button id="showContactsBtn" class="filter-btn">Contacts</button>
-                            <button id="showGroupsBtn" class="filter-btn">Groups</button>
-                        </div>
-                        <div class="chat-list" id="chatList" style="display: none;">
-                            <!-- Available chats will appear here -->
-                        </div>
-                    </div>
-                    
-                    <!-- Manual Input -->
-                    <div class="manual-input">
-                        <h4 style="margin-top: 20px;">Or Enter Manually</h4>
-                        <div class="input-group">
-                            <input type="text" id="phoneInput" placeholder="Enter phone number or group ID (e.g., +1234567890, 1234567890@c.us, or 120363123456789012@g.us)" />
-                            <button id="addPhoneBtn" class="btn btn-secondary">
-                                <i class="fas fa-plus"></i> Add
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div class="phone-list" id="phoneList">
-                        <!-- Added phone numbers will appear here -->
-                    </div>
-                    <div class="input-actions">
-                        <button id="saveListBtn" class="btn btn-success" disabled>
-                            <i class="fas fa-save"></i> Save List
-                        </button>
-                        <button id="loadListBtn" class="btn btn-info">
-                            <i class="fas fa-folder-open"></i> Load Saved
-                        </button>
-                        <button id="customerListBtn" class="btn btn-secondary">
-                            <i class="fas fa-users"></i> Customer List
-                        </button>
-                        <button id="clearPhonesBtn" class="btn btn-danger">
-                            <i class="fas fa-trash"></i> Clear All
-                        </button>
-                        <button id="setPhoneBtn" class="btn btn-primary" disabled>
-                            <i class="fas fa-search"></i> View Merged Messages
-                        </button>
-                    </div>
-                    <p class="phone-instructions" style="margin-top: 10px; font-size: 14px; color: #6c757d;">
-                        Select from your chats or manually enter phone numbers/group IDs to view merged messages.
-                    </p>
-                </div>
-                
-                <!-- Details View Container (Hidden by default) -->
-                <div class="details-view-container" id="detailsViewContainer" style="display: none;">
-                    
-            <!-- Text Filter -->
-            <div class="text-filter-group">
-                <label>Text Filter:</label>
-                <div class="text-filter-input">
-                    <input type="text" id="textFilter" placeholder="Enter text to filter messages (e.g., 👍P, 👍C, keywords)" class="text-input">
-                    <div class="text-filter-actions">
-                        <button id="applyTextFilter" class="btn btn-info">
-                            <i class="fas fa-search"></i> Filter Text
-                        </button>
-                        <button id="clearTextFilter" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear Text
-                        </button>
-                    </div>
-                </div>
-                <div class="text-filter-info">
-                    <small>Filter messages containing any text pattern. Useful for emojis, status codes, or phrases.</small>
-                </div>
-            </div>
-
-            <!-- Hours Filter -->
-            <div class="hours-filter-group">
-                <label>Hours Filter:</label>
-                <div class="hours-filter-input">
-                    <input type="number" id="hoursFilter" placeholder="Enter hours (e.g., 2, 6, 12, 24)" class="hours-input" min="1" max="168">
-                    <div class="hours-filter-actions">
-                        <button id="applyHoursFilter" class="btn btn-warning">
-                            <i class="fas fa-clock"></i> Filter Last Hours
-                        </button>
-                        <button id="clearHoursFilter" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear Hours
-                        </button>
-                    </div>
-                </div>
-                <div class="hours-filter-info">
-                    <small>Show messages from the last X hours (1-168 hours = 1 week)</small>
-                </div>
-
-            <!-- Customer Selector -->
-            <div class="customer-selector-group">
-                <label>Filter by Customer:</label>
-                <div class="customer-selector-input">
-                    <select id="customerSelector" class="customer-dropdown">
-                        <option value="">-- All Customers --</option>
-                        <!-- Options will be populated dynamically -->
-                    </select>
-                    <div class="customer-selector-actions">
-                        <button id="applyCustomerSelector" class="btn btn-primary">
-                            <i class="fas fa-filter"></i> Filter
-                        </button>
-                        <button id="clearCustomerSelector" class="btn btn-secondary">
-                            <i class="fas fa-times"></i> Clear
-                        </button>
-                    </div>
-                </div>
-                <div class="customer-selector-info">
-                    <small>Select a specific customer to show only their messages</small>
-                </div>
-            </div>
-
-                </div>
-                <!-- End Details View Container -->
-                
-            </div>
-
-            <!-- Error Messages -->
-            <div class="error-message" id="errorMessage" style="display: none;">
-                <i class="fas fa-exclamation-triangle"></i>
-                <span id="errorText"></span>
-            </div>
+        <!-- Initializing -->
+        <div id="viewInitializing">
+          <div class="spinner"></div>
+          <p class="qr-label">Starting WhatsApp…</p>
+          <p class="qr-sub">Launching browser. This takes about 30 seconds.</p>
         </div>
+
+        <!-- QR -->
+        <div id="viewQR" style="display:none; flex-direction:column; align-items:center; gap:16px;">
+          <p class="qr-label">Scan with WhatsApp</p>
+          <div class="qr-box">
+            <img id="qrImage" src="" alt="QR Code" />
+          </div>
+          <p class="qr-sub">Open WhatsApp → Linked devices → Link a device</p>
+          <span class="qr-countdown" id="qrCountdown" style="display:none;">
+            ⏱ Refreshing in <strong id="qrSeconds">20</strong>s
+          </span>
+        </div>
+
+        <!-- Connected -->
+        <div id="viewConnected" style="display:none; flex-direction:column; align-items:center; gap:16px;">
+          <span class="connected-icon">✅</span>
+          <p class="connected-label">WhatsApp Connected</p>
+          <p class="connected-sub">You can now use Groups, Send, Schedule and Attendance.</p>
+          <button class="btn btn-danger" id="clearSessionBtn">🔓 Log Out &amp; Clear Session</button>
+        </div>
+
+        <!-- Disconnected -->
+        <div id="viewDisconnected" style="display:none; flex-direction:column; align-items:center; gap:16px;">
+          <span style="font-size:3rem;">⚠️</span>
+          <p class="disconnected-label">Disconnected</p>
+          <p class="qr-sub" id="disconnectedSub">Reconnecting automatically…</p>
+          <button class="btn btn-primary" id="reconnectBtn">🔄 Reconnect Now</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Groups tab ──────────────────────────────────────────────────────── -->
+  <div class="tab-panel" id="tab-groups" role="tabpanel">
+    <div class="card">
+      <div class="groups-toolbar">
+        <span class="card-title" style="margin:0">👥 Customer Groups</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="cache-age" id="groupsCacheAge"></span>
+          <button class="btn btn-ghost" id="refreshGroupsBtn" style="padding:7px 14px;font-size:0.82rem;">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <!-- Not configured -->
+      <div id="groupsNotConfigured" style="display:none;">
+        <div class="setup-notice">
+          <strong>Google Sheets not configured.</strong><br/>
+          Add these to your <code>.env</code> file on the VPS, then restart the app:
+          <ul>
+            <li><code>GOOGLE_CLIENT_EMAIL</code> — service account email</li>
+            <li><code>GOOGLE_PRIVATE_KEY</code> — private key from the JSON file</li>
+            <li><code>GOOGLE_SPREADSHEET_ID</code> — from the sheet URL</li>
+          </ul>
+          Each <strong>sheet tab</strong> in your spreadsheet = one customer group.<br/>
+          Required columns: <code>Name</code> and <code>Phone</code> (headers auto-detected).
+        </div>
+      </div>
+
+      <!-- Loading -->
+      <div id="groupsLoading" style="display:none; text-align:center; padding:40px; color:var(--text-muted);">
+        <div class="spinner" style="margin:0 auto 12px;"></div>
+        Loading groups from Google Sheets…
+      </div>
+
+      <!-- Error -->
+      <div id="groupsError" style="display:none; background:#ffebee; border:1px solid #ef9a9a; border-radius:8px; padding:14px 16px; color:#c62828; font-size:0.88rem;"></div>
+
+      <!-- Grid -->
+      <div class="groups-grid" id="groupsGrid"></div>
+    </div>
+  </div>
+
+  <!-- ── Messages tab ──────────────────────────────────────────────────────── -->
+  <div class="tab-panel" id="tab-messages" role="tabpanel">
+
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:16px">
+      <p class="card-title" style="margin-bottom:16px">📨 View Messages</p>
+      <div class="send-form">
+
+        <!-- Group (from Google Sheets) -->
+        <div class="form-group">
+          <label class="form-label" for="msgGroupSel">Group</label>
+          <select id="msgGroupSel" class="form-select">
+            <option value="">— select a group —</option>
+          </select>
+        </div>
+
+        <!-- Contacts (shown after group is selected) -->
+        <div id="msgContactsSection" class="form-group" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label class="form-label" style="margin:0">Contacts</label>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost" id="msgSelAllContacts"   style="padding:4px 12px;font-size:0.78rem">✓ All</button>
+              <button class="btn btn-ghost" id="msgDeselAllContacts" style="padding:4px 12px;font-size:0.78rem">✕ None</button>
+            </div>
+          </div>
+          <div id="msgContactsList" class="vmsg-contacts-list"></div>
+          <span class="form-hint" id="msgContactsHint"></span>
+        </div>
+
+        <!-- Quick date range presets -->
+        <div class="form-group">
+          <label class="form-label">Quick Range</label>
+          <div class="vmsg-presets">
+            <button class="vmsg-preset-btn active" data-preset="today">Today</button>
+            <button class="vmsg-preset-btn" data-preset="yesterday">Yesterday</button>
+            <button class="vmsg-preset-btn" data-preset="last7">Last 7 Days</button>
+            <button class="vmsg-preset-btn" data-preset="thisWeek">This Week</button>
+            <button class="vmsg-preset-btn" data-preset="thisMonth">This Month</button>
+            <button class="vmsg-preset-btn" data-preset="lastMonth">Last Month</button>
+          </div>
+        </div>
+
+        <!-- Custom date/time range -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group" style="margin:0">
+            <label class="form-label" for="msgFrom">From</label>
+            <input type="datetime-local" id="msgFrom" class="form-input" />
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label" for="msgTo">To</label>
+            <input type="datetime-local" id="msgTo" class="form-input" />
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="msgLoadBtn">🔍 Load Messages</button>
+          <label class="vmsg-toggle-label">
+            <input type="checkbox" id="msgShowMine" />
+            Show my messages
+          </label>
+        </div>
+        <span class="form-hint" style="margin-top:6px;display:block">Fetches up to 500 recent messages per contact within the selected range.</span>
+      </div>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js?v=23"></script>
+    <!-- Message list -->
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <p class="card-title" style="margin:0" id="msgListTitle">Messages</p>
+        <label id="msgSelectAllWrap" style="display:none;align-items:center;gap:6px;font-size:0.83rem;cursor:pointer;user-select:none">
+          <input type="checkbox" id="msgSelectAll" /> Select all
+        </label>
+      </div>
+      <div id="msgLoading" style="display:none;text-align:center;padding:32px;color:var(--text-muted)">
+        <div class="spinner" style="margin:0 auto 12px"></div>Loading messages…
+      </div>
+      <div id="msgError" style="display:none" class="send-result-box send-result-err"></div>
+      <div id="msgEmpty" style="text-align:center;padding:32px;color:var(--text-muted);font-size:0.9rem">
+        Select a group and date range, then click Load Messages.
+      </div>
+      <div id="msgList" style="display:none"></div>
+    </div>
+
+    <!-- Mark panel (shown when ≥1 message is selected) -->
+    <div class="card" id="msgMarkCard" style="display:none;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <p id="msgMarkCountLabel" style="margin:0;flex:1;font-size:0.88rem;color:var(--text-muted)">0 selected</p>
+        <button class="btn" id="msgMarkAttBtn" style="background:#2e7d32;color:#fff;border-color:#2e7d32">✅ Mark Attendance</button>
+        <button class="btn btn-ghost" id="msgMarkCodeBtn">🏷 Mark Code</button>
+      </div>
+
+      <!-- Code selector (visible after clicking Mark Code) -->
+      <div id="msgCodePanel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+          <div class="form-group" style="margin:0;flex:1;min-width:160px">
+            <label class="form-label">Existing Code</label>
+            <select id="msgCodeSel" class="form-select">
+              <option value="">— select —</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;flex:1;min-width:140px">
+            <label class="form-label">New Code</label>
+            <input type="text" id="msgNewCode" class="form-input" placeholder="e.g. LEAVE" style="text-transform:uppercase" />
+          </div>
+          <button class="btn btn-primary" id="msgConfirmCodeBtn">🏷 Confirm</button>
+        </div>
+      </div>
+
+      <div id="msgMarkResult" style="display:none;margin-top:10px"></div>
+    </div>
+
+    <!-- Forward panel (shown when ≥1 message is selected) -->
+    <div class="card" id="msgForwardCard" style="display:none">
+      <p class="card-title" style="margin-bottom:16px">📤 Forward Selected Messages</p>
+      <div class="send-form">
+        <div class="form-group">
+          <label class="form-label" id="msgForwardCountLabel">0 messages selected — forward to:</label>
+          <select id="msgForwardGroup" class="form-select">
+            <option value="">— select target group —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="msgCaption">Caption <span style="color:var(--text-muted);font-weight:400">(optional — appended to every forwarded message)</span></label>
+          <textarea id="msgCaption" class="form-textarea" rows="2" placeholder="e.g. Please review the above…"></textarea>
+        </div>
+        <div class="send-actions">
+          <button class="btn btn-primary" id="msgForwardBtn">📤 Forward</button>
+          <button class="btn btn-ghost"   id="msgClearSelBtn">Clear Selection</button>
+        </div>
+        <div id="msgForwardResult" style="display:none"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Send tab ────────────────────────────────────────────────────────── -->
+  <div class="tab-panel" id="tab-send" role="tabpanel">
+    <div class="card">
+      <p class="card-title">✉️ Send Message</p>
+
+      <div class="send-form">
+        <!-- Group selector -->
+        <div class="form-group">
+          <label class="form-label" for="sendGroup">Group</label>
+          <select id="sendGroup" class="form-select">
+            <option value="">— select a group —</option>
+          </select>
+          <span class="form-hint" id="sendGroupHint"></span>
+        </div>
+
+        <!-- Message -->
+        <div class="form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <label class="form-label" style="margin:0" for="sendText">Message</label>
+            <div class="tpl-loader-row" data-target="sendText" data-preview="sendPreview"></div>
+          </div>
+          <div class="emoji-bar" data-target="sendText"></div>
+          <div class="template-bar" data-target="sendText"></div>
+          <textarea id="sendText" class="form-textarea" rows="5"
+            placeholder="Type your message here…"></textarea>
+          <div class="tpl-preview" id="sendPreview" style="display:none"></div>
+          <span class="form-hint" id="sendCharCount">0 characters</span>
+        </div>
+
+        <!-- Attachment -->
+        <div class="form-group">
+          <label class="form-label">Attachment <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+          <label class="file-picker" id="filePicker">
+            <span id="filePickerLabel">📎 Choose file</span>
+            <input type="file" id="sendFile" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" style="display:none" />
+          </label>
+          <div id="filePreview" style="display:none" class="file-preview">
+            <img id="filePreviewImg" style="display:none" alt="preview" />
+            <div class="file-preview-info">
+              <span id="filePreviewName"></span>
+              <span id="filePreviewSize" style="color:var(--text-muted);font-size:0.78rem;"></span>
+            </div>
+            <button class="btn-remove-file" id="removeFileBtn" title="Remove">✕</button>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="send-actions">
+          <button class="btn btn-primary" id="sendBtn">📤 Send</button>
+          <button class="btn btn-ghost"   id="clearSendBtn">Clear</button>
+        </div>
+
+        <!-- Result -->
+        <div id="sendResult" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Schedule tab ────────────────────────────────────────────────────── -->
+  <div class="tab-panel" id="tab-schedule" role="tabpanel">
+
+    <!-- Create form -->
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <p class="card-title" style="margin:0">📅 New Schedule</p>
+        <button class="btn btn-ghost" id="schedFormToggle" style="padding:6px 12px;font-size:0.82rem;">▲ Collapse</button>
+      </div>
+
+      <div id="schedFormBody" class="send-form">
+        <!-- Label -->
+        <div class="form-group">
+          <label class="form-label" for="schedLabel">Label <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+          <input type="text" id="schedLabel" class="form-input" placeholder="e.g. Morning reminder" />
+        </div>
+
+        <!-- Group -->
+        <div class="form-group">
+          <label class="form-label" for="schedGroup">Group</label>
+          <select id="schedGroup" class="form-select">
+            <option value="">— select a group —</option>
+          </select>
+        </div>
+
+        <!-- Message -->
+        <div class="form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <label class="form-label" style="margin:0" for="schedText">Message</label>
+            <div class="tpl-loader-row" data-target="schedText" data-preview="schedPreview"></div>
+          </div>
+          <div class="emoji-bar" data-target="schedText"></div>
+          <div class="template-bar" data-target="schedText"></div>
+          <textarea id="schedText" class="form-textarea" rows="4" placeholder="Type your message…"></textarea>
+          <div class="tpl-preview" id="schedPreview" style="display:none"></div>
+        </div>
+
+        <!-- Attachment -->
+        <div class="form-group">
+          <label class="form-label">Attachment <span style="color:var(--text-muted);font-weight:400">(optional, max 5 MB)</span></label>
+          <label class="file-picker" id="schedFilePicker">
+            <span id="schedFileLabel">📎 Choose file</span>
+            <input type="file" id="schedFile" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" style="display:none" />
+          </label>
+          <div id="schedFilePreview" style="display:none" class="file-preview">
+            <img id="schedFileImg" style="display:none" alt="preview" />
+            <div class="file-preview-info">
+              <span id="schedFileName"></span>
+              <span id="schedFileSize" style="color:var(--text-muted);font-size:0.78rem;"></span>
+            </div>
+            <button class="btn-remove-file" id="schedRemoveFile" title="Remove">✕</button>
+          </div>
+        </div>
+
+        <!-- Schedule type -->
+        <div class="form-group">
+          <label class="form-label">Repeat</label>
+          <div class="sched-type-row">
+            <label class="sched-type-opt"><input type="radio" name="schedType" value="once"          /> Once</label>
+            <label class="sched-type-opt"><input type="radio" name="schedType" value="daily"  checked /> Daily</label>
+            <label class="sched-type-opt"><input type="radio" name="schedType" value="weekly"        /> Weekly</label>
+            <label class="sched-type-opt"><input type="radio" name="schedType" value="monthly"       /> Monthly</label>
+          </div>
+        </div>
+
+        <!-- Once date -->
+        <div class="form-group" id="schedOnceDateGroup" style="display:none">
+          <label class="form-label" for="schedOnceDate">Date</label>
+          <input type="date" id="schedOnceDate" class="form-input" style="max-width:200px" />
+        </div>
+
+        <!-- Time -->
+        <div class="form-group">
+          <label class="form-label" for="schedTime">Time</label>
+          <input type="time" id="schedTime" class="form-input" value="09:00" style="max-width:160px" />
+          <span class="form-hint" id="schedTimezone">Timezone: <?= TIMEZONE ?></span>
+        </div>
+
+        <!-- Weekly days -->
+        <div class="form-group" id="schedDaysGroup" style="display:none">
+          <label class="form-label">Days</label>
+          <div class="day-checkboxes">
+            <label class="day-check"><input type="checkbox" name="schedDay" value="0" /> Sun</label>
+            <label class="day-check"><input type="checkbox" name="schedDay" value="1" checked /> Mon</label>
+            <label class="day-check"><input type="checkbox" name="schedDay" value="2" /> Tue</label>
+            <label class="day-check"><input type="checkbox" name="schedDay" value="3" /> Wed</label>
+            <label class="day-check"><input type="checkbox" name="schedDay" value="4" /> Thu</label>
+            <label class="day-check"><input type="checkbox" name="schedDay" value="5" /> Fri</label>
+            <label class="day-check"><input type="checkbox" name="schedDay" value="6" /> Sat</label>
+          </div>
+        </div>
+
+        <!-- Monthly day -->
+        <div class="form-group" id="schedDomGroup" style="display:none">
+          <label class="form-label" for="schedDom">Day of month</label>
+          <input type="number" id="schedDom" class="form-input" min="1" max="28" value="1" style="max-width:100px" />
+          <span class="form-hint">Use 1–28 to avoid month-end issues</span>
+        </div>
+
+        <div class="send-actions">
+          <button class="btn btn-primary" id="schedSaveBtn">💾 Save Schedule</button>
+          <button class="btn btn-ghost"   id="schedClearBtn">Clear</button>
+        </div>
+        <div id="schedFormResult" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Schedule list -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <p class="card-title" style="margin:0">Saved Schedules</p>
+        <span id="schedCount" style="font-size:0.82rem;color:var(--text-muted)"></span>
+      </div>
+      <div id="schedList">
+        <p style="color:var(--text-muted);font-size:0.9rem;text-align:center;padding:24px 0">No schedules yet.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Attendance tab ──────────────────────────────────────────────────── -->
+  <div class="tab-panel" id="tab-attendance" role="tabpanel">
+
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="att-filters">
+        <div class="form-group" style="flex:1;margin:0">
+          <label class="form-label" for="attGroup">Group</label>
+          <select id="attGroup" class="form-select"></select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label" for="attDate">Date</label>
+          <input type="date" id="attDate" class="form-input" style="min-width:150px" />
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px">
+          <button class="btn btn-primary" id="attLoadBtn" style="padding:10px 18px">Load</button>
+          <button class="btn btn-ghost"   id="attExportBtn" style="padding:10px 14px" title="Export CSV">📥 CSV</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats row -->
+    <div class="att-stats" id="attStats" style="display:none">
+      <div class="att-stat present"><span id="statPresent">0</span><small>Present</small></div>
+      <div class="att-stat late">   <span id="statLate">0</span>   <small>Late</small>   </div>
+      <div class="att-stat absent"> <span id="statAbsent">0</span> <small>Absent</small> </div>
+      <div class="att-stat unmarked"><span id="statUnmarked">0</span><small>Unmarked</small></div>
+    </div>
+
+    <!-- Attendance table -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <p class="card-title" style="margin:0">✅ Attendance</p>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" id="attMarkAllPresent" style="padding:7px 12px;font-size:0.82rem" title="Mark all unmarked as Present">✅ Mark All Present</button>
+          <button class="btn btn-ghost" id="attClearAll"       style="padding:7px 12px;font-size:0.82rem" title="Remove all records for this day">🗑 Clear Day</button>
+        </div>
+      </div>
+
+      <div id="attLoading" style="display:none;text-align:center;padding:40px;color:var(--text-muted)">
+        <div class="spinner" style="margin:0 auto 12px"></div> Loading…
+      </div>
+      <div id="attError"   style="display:none" class="send-result-box send-result-err"></div>
+      <div id="attEmpty"   style="display:none;text-align:center;padding:32px;color:var(--text-muted)">
+        Select a group and date, then click Load.
+      </div>
+
+      <div id="attTableWrap" style="display:none;overflow-x:auto">
+        <table class="att-table" id="attTable">
+          <thead>
+            <tr>
+              <th>#</th><th>Name</th><th>Phone</th>
+              <th>Status</th><th>Code</th><th>Time</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="attTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Code config -->
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <p class="card-title" style="margin:0">⚙️ Attendance Codes</p>
+        <span style="font-size:0.78rem;color:var(--text-muted)">Codes are case-insensitive</span>
+      </div>
+      <div class="send-form">
+        <div class="form-group">
+          <label class="form-label">Group</label>
+          <select id="cfgGroup" class="form-select" style="max-width:280px"></select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="form-group" style="margin:0">
+            <label class="form-label" style="color:#2e7d32">Present codes</label>
+            <input type="text" id="cfgPresent" class="form-input" placeholder="P, here, yes" />
+            <span class="form-hint">comma-separated</span>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label" style="color:var(--warning)">Late codes</label>
+            <input type="text" id="cfgLate" class="form-input" placeholder="L, late" />
+            <span class="form-hint">comma-separated</span>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label" style="color:var(--danger)">Absent codes</label>
+            <input type="text" id="cfgAbsent" class="form-input" placeholder="A, absent" />
+            <span class="form-hint">comma-separated</span>
+          </div>
+        </div>
+        <div class="send-actions" style="margin-top:12px">
+          <button class="btn btn-primary" id="cfgSaveBtn">💾 Save Codes</button>
+        </div>
+        <div id="cfgResult" style="display:none;margin-top:10px"></div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- /.app -->
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>

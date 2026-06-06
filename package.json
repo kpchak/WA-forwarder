@@ -26,6 +26,7 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "googleapis": "^164.1.0",
+    "node-cron": "^4.2.1",
     "qrcode": "^1.5.3",
     "socket.io": "^4.8.3",
     "whatsapp-web.js": "https://github.com/wwebjs/whatsapp-web.js.git#7cd69dd7f5868b58a48e66532c6c0705b96304b8"
