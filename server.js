@@ -876,7 +876,7 @@ function scheduleReconnect() {
       if (isInitializing) {
         console.log('⚠️ Client initialization already in progress, skipping...');
         isReconnecting = false;
-        isInitializing = false;
+        // Do NOT reset isInitializing here — the other code path still owns it.
         return;
       }
 

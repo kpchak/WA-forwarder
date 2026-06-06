@@ -2,11 +2,11 @@ module.exports = {
   apps: [{
     name: 'wa-forwarder',
     script: 'server.js',
-    node_args: '--expose-gc --max-old-space-size=512',
+    node_args: '--expose-gc --max-old-space-size=768',
     instances: 1,
     autorestart: true,
     watch: false,
-    max_memory_restart: '600M',
+    max_memory_restart: '900M',
     env: {
       NODE_ENV: 'production',
       HOSTINGER: 'true',
