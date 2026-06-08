@@ -15,25 +15,22 @@ const MONTHS = ['January','February','March','April','May','June',
  *   <month>        → January, February, …
  *   <year>         → 2026
  */
-function resolveTemplates(text, now = new Date()) {
-  if (!text || !hasTemplates(text)) return text;
+function resolveTemplates(text, now = new Date(), name = '') {
+  if (!text) return text;
 
   return text
-    // <day>+N  <day>-N  <day>
     .replace(/<day>([+-]\d+)?/g, (_, offset) => {
       const n = offset ? parseInt(offset, 10) : 0;
       return String(now.getDate() + n);
     })
-    // <weekday>
     .replace(/<weekday>/g, DAYS[now.getDay()])
-    // <month>
     .replace(/<month>/g, MONTHS[now.getMonth()])
-    // <year>
-    .replace(/<year>/g, String(now.getFullYear()));
+    .replace(/<year>/g, String(now.getFullYear()))
+    .replace(/<name>/g, name || '');
 }
 
 function hasTemplates(text) {
-  return /<(day|weekday|month|year)>/.test(text || '');
+  return /<(day|weekday|month|year|name)>/.test(text || '');
 }
 
 module.exports = { resolveTemplates, hasTemplates };

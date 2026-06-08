@@ -4,7 +4,8 @@ const express          = require('express');
 const router           = express.Router();
 const wa               = require('../whatsapp/client');
 const sheets           = require('../services/sheets');
-const { MessageMedia } = require('whatsapp-web.js');
+const { MessageMedia }   = require('whatsapp-web.js');
+const { resolveTemplates } = require('../utils/templates');
 
 // Cache loaded Message objects (30-min TTL) so media can be fetched on demand
 const _msgCache = new Map(); // serializedId → { msg, savedAt }
@@ -108,16 +109,23 @@ router.get('/media/:msgId', async (req, res) => {
 router.post('/forward', async (req, res) => {
   try {
     if (wa.getState() !== 'ready') return res.status(503).json({ error: 'WhatsApp not connected' });
-    const { messageIds, targetGroupName, caption } = req.body;
+    const { messageIds, targetGroupName, contacts, prefix, caption } = req.body;
+    console.log('[Forward] prefix=%j  caption=%j  contacts[0]=%j', prefix, caption, contacts?.[0]);
     if (!messageIds?.length) return res.status(400).json({ error: 'messageIds required' });
     if (!targetGroupName)    return res.status(400).json({ error: 'targetGroupName required' });
 
     const groups = await sheets.fetchGroups(false);
     const group  = groups.find((g) => g.name === targetGroupName);
-    if (!group)                return res.status(404).json({ error: `Group "${targetGroupName}" not found` });
-    if (!group.members.length) return res.status(400).json({ error: `Group "${targetGroupName}" has no members` });
+    if (!group) return res.status(404).json({ error: `Group "${targetGroupName}" not found` });
+
+    // Use explicitly selected contacts if provided, otherwise all group members
+    const members = (contacts?.length)
+      ? contacts
+      : group.members;
+    if (!members.length) return res.status(400).json({ error: 'No contacts to send to' });
 
     const client = wa.getClient();
+    const now    = new Date();
 
     // Download media up-front (once) before iterating members
     const payloads = [];
@@ -136,17 +144,21 @@ router.post('/forward', async (req, res) => {
     }
 
     const results = [];
-    for (const member of group.members) {
+    for (const member of members) {
       const waId = _toWAId(member.phone);
       if (!waId) { results.push({ name: member.name, phone: member.phone, ok: false, error: 'Invalid phone' }); continue; }
+      const name = member.name || '';
+      const pre  = resolveTemplates(prefix  || '', now, name);
+      const cap  = resolveTemplates(caption || '', now, name);
       try {
         for (const p of payloads) {
+          const bodyText = resolveTemplates(p.text || '', now, name);
           if (p.media) {
-            const cap = caption ? (p.text ? `${p.text}\n\n${caption}` : caption) : (p.text || '');
-            await client.sendMessage(waId, p.media, { caption: cap });
-          } else if (p.text || caption) {
-            const txt = caption ? (p.text ? `${p.text}\n\n${caption}` : caption) : p.text;
-            await client.sendMessage(waId, txt);
+            const mediaCaption = [pre, bodyText, cap].filter(Boolean).join('\n\n');
+            await client.sendMessage(waId, p.media, { caption: mediaCaption });
+          } else {
+            const txt = [pre, bodyText, cap].filter(Boolean).join('\n\n');
+            if (txt) await client.sendMessage(waId, txt);
           }
           await _sleep(300);
         }

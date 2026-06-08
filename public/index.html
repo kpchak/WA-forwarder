@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WA Customer Manager</title>
-  <link rel="stylesheet" href="style.css?v=13" />
+  <link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 <div class="app">
@@ -23,9 +23,7 @@
     <button class="tab-btn active" data-tab="connect"    role="tab">🔗 Connect</button>
     <button class="tab-btn"        data-tab="groups"     role="tab" disabled>👥 Groups</button>
     <button class="tab-btn"        data-tab="messages"   role="tab" disabled>📨 Messages</button>
-    <button class="tab-btn"        data-tab="send"       role="tab" disabled>✉️ Send</button>
     <button class="tab-btn"        data-tab="schedule"   role="tab" disabled>📅 Schedule</button>
-    <button class="tab-btn"        data-tab="attendance" role="tab" disabled>✅ Attendance</button>
   </nav>
 
   <!-- ── Connect tab ──────────────────────────────────────────────────────── -->
@@ -233,8 +231,28 @@
             <option value="">— select target group —</option>
           </select>
         </div>
+
+        <!-- Contact selector -->
+        <div id="msgFwdContactsSection" class="form-group" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label class="form-label" style="margin:0">Send to</label>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost" id="msgFwdSelAll"  style="padding:4px 12px;font-size:0.78rem">✓ All</button>
+              <button class="btn btn-ghost" id="msgFwdSelNone" style="padding:4px 12px;font-size:0.78rem">✕ None</button>
+            </div>
+          </div>
+          <div id="msgFwdContactsList" class="vmsg-contacts-list"></div>
+          <span class="form-hint" id="msgFwdContactsHint"></span>
+        </div>
+
         <div class="form-group">
-          <label class="form-label" for="msgCaption">Caption <span style="color:var(--text-muted);font-weight:400">(optional — appended to every forwarded message)</span></label>
+          <label class="form-label" for="msgPrefix">Add at beginning <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+          <div class="template-bar" data-target="msgPrefix" data-preview=""></div>
+          <textarea id="msgPrefix" class="form-textarea" rows="2" placeholder="e.g. Dear &lt;name&gt;,"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="msgCaption">Add at end <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+          <div class="template-bar" data-target="msgCaption" data-preview=""></div>
           <textarea id="msgCaption" class="form-textarea" rows="2" placeholder="e.g. Please review the above…"></textarea>
         </div>
         <div class="send-actions">
@@ -245,64 +263,6 @@
       </div>
     </div>
 
-  </div>
-
-  <!-- ── Send tab ────────────────────────────────────────────────────────── -->
-  <div class="tab-panel" id="tab-send" role="tabpanel">
-    <div class="card">
-      <p class="card-title">✉️ Send Message</p>
-
-      <div class="send-form">
-        <!-- Group selector -->
-        <div class="form-group">
-          <label class="form-label" for="sendGroup">Group</label>
-          <select id="sendGroup" class="form-select">
-            <option value="">— select a group —</option>
-          </select>
-          <span class="form-hint" id="sendGroupHint"></span>
-        </div>
-
-        <!-- Message -->
-        <div class="form-group">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-            <label class="form-label" style="margin:0" for="sendText">Message</label>
-            <div class="tpl-loader-row" data-target="sendText" data-preview="sendPreview"></div>
-          </div>
-          <div class="emoji-bar" data-target="sendText"></div>
-          <div class="template-bar" data-target="sendText"></div>
-          <textarea id="sendText" class="form-textarea" rows="5"
-            placeholder="Type your message here…"></textarea>
-          <div class="tpl-preview" id="sendPreview" style="display:none"></div>
-          <span class="form-hint" id="sendCharCount">0 characters</span>
-        </div>
-
-        <!-- Attachment -->
-        <div class="form-group">
-          <label class="form-label">Attachment <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
-          <label class="file-picker" id="filePicker">
-            <span id="filePickerLabel">📎 Choose file</span>
-            <input type="file" id="sendFile" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" style="display:none" />
-          </label>
-          <div id="filePreview" style="display:none" class="file-preview">
-            <img id="filePreviewImg" style="display:none" alt="preview" />
-            <div class="file-preview-info">
-              <span id="filePreviewName"></span>
-              <span id="filePreviewSize" style="color:var(--text-muted);font-size:0.78rem;"></span>
-            </div>
-            <button class="btn-remove-file" id="removeFileBtn" title="Remove">✕</button>
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="send-actions">
-          <button class="btn btn-primary" id="sendBtn">📤 Send</button>
-          <button class="btn btn-ghost"   id="clearSendBtn">Clear</button>
-        </div>
-
-        <!-- Result -->
-        <div id="sendResult" style="display:none"></div>
-      </div>
-    </div>
   </div>
 
   <!-- ── Schedule tab ────────────────────────────────────────────────────── -->
@@ -359,6 +319,14 @@
           </div>
         </div>
 
+        <!-- Quick send actions -->
+        <div class="send-actions">
+          <button class="btn btn-success" id="schedSendNowBtn">📤 Send Now</button>
+          <button class="btn btn-ghost"   id="schedClearBtn">Clear</button>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--border);margin:4px 0 8px" />
+
         <!-- Schedule type -->
         <div class="form-group">
           <label class="form-label">Repeat</label>
@@ -406,7 +374,6 @@
 
         <div class="send-actions">
           <button class="btn btn-primary" id="schedSaveBtn">💾 Save Schedule</button>
-          <button class="btn btn-ghost"   id="schedClearBtn">Clear</button>
         </div>
         <div id="schedFormResult" style="display:none"></div>
       </div>
@@ -425,106 +392,9 @@
 
   </div>
 
-  <!-- ── Attendance tab ──────────────────────────────────────────────────── -->
-  <div class="tab-panel" id="tab-attendance" role="tabpanel">
-
-    <!-- Filters -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="att-filters">
-        <div class="form-group" style="flex:1;margin:0">
-          <label class="form-label" for="attGroup">Group</label>
-          <select id="attGroup" class="form-select"></select>
-        </div>
-        <div class="form-group" style="margin:0">
-          <label class="form-label" for="attDate">Date</label>
-          <input type="date" id="attDate" class="form-input" style="min-width:150px" />
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:8px">
-          <button class="btn btn-primary" id="attLoadBtn" style="padding:10px 18px">Load</button>
-          <button class="btn btn-ghost"   id="attExportBtn" style="padding:10px 14px" title="Export CSV">📥 CSV</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Stats row -->
-    <div class="att-stats" id="attStats" style="display:none">
-      <div class="att-stat present"><span id="statPresent">0</span><small>Present</small></div>
-      <div class="att-stat late">   <span id="statLate">0</span>   <small>Late</small>   </div>
-      <div class="att-stat absent"> <span id="statAbsent">0</span> <small>Absent</small> </div>
-      <div class="att-stat unmarked"><span id="statUnmarked">0</span><small>Unmarked</small></div>
-    </div>
-
-    <!-- Attendance table -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-        <p class="card-title" style="margin:0">✅ Attendance</p>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost" id="attMarkAllPresent" style="padding:7px 12px;font-size:0.82rem" title="Mark all unmarked as Present">✅ Mark All Present</button>
-          <button class="btn btn-ghost" id="attClearAll"       style="padding:7px 12px;font-size:0.82rem" title="Remove all records for this day">🗑 Clear Day</button>
-        </div>
-      </div>
-
-      <div id="attLoading" style="display:none;text-align:center;padding:40px;color:var(--text-muted)">
-        <div class="spinner" style="margin:0 auto 12px"></div> Loading…
-      </div>
-      <div id="attError"   style="display:none" class="send-result-box send-result-err"></div>
-      <div id="attEmpty"   style="display:none;text-align:center;padding:32px;color:var(--text-muted)">
-        Select a group and date, then click Load.
-      </div>
-
-      <div id="attTableWrap" style="display:none;overflow-x:auto">
-        <table class="att-table" id="attTable">
-          <thead>
-            <tr>
-              <th>#</th><th>Name</th><th>Phone</th>
-              <th>Status</th><th>Code</th><th>Time</th><th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="attTbody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Code config -->
-    <div class="card" style="margin-top:16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <p class="card-title" style="margin:0">⚙️ Attendance Codes</p>
-        <span style="font-size:0.78rem;color:var(--text-muted)">Codes are case-insensitive</span>
-      </div>
-      <div class="send-form">
-        <div class="form-group">
-          <label class="form-label">Group</label>
-          <select id="cfgGroup" class="form-select" style="max-width:280px"></select>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-          <div class="form-group" style="margin:0">
-            <label class="form-label" style="color:#2e7d32">Present codes</label>
-            <input type="text" id="cfgPresent" class="form-input" placeholder="P, here, yes" />
-            <span class="form-hint">comma-separated</span>
-          </div>
-          <div class="form-group" style="margin:0">
-            <label class="form-label" style="color:var(--warning)">Late codes</label>
-            <input type="text" id="cfgLate" class="form-input" placeholder="L, late" />
-            <span class="form-hint">comma-separated</span>
-          </div>
-          <div class="form-group" style="margin:0">
-            <label class="form-label" style="color:var(--danger)">Absent codes</label>
-            <input type="text" id="cfgAbsent" class="form-input" placeholder="A, absent" />
-            <span class="form-hint">comma-separated</span>
-          </div>
-        </div>
-        <div class="send-actions" style="margin-top:12px">
-          <button class="btn btn-primary" id="cfgSaveBtn">💾 Save Codes</button>
-        </div>
-        <div id="cfgResult" style="display:none;margin-top:10px"></div>
-      </div>
-    </div>
-
-  </div>
-
 </div><!-- /.app -->
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

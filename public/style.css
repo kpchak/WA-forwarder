@@ -138,6 +138,7 @@ body {
 .btn:hover  { opacity: 0.88; }
 .btn:active { transform: scale(0.97); }
 .btn-primary { background: var(--green-dark); color: #fff; }
+.btn-success { background: #1976d2;           color: #fff; }
 .btn-danger  { background: var(--danger);     color: #fff; }
 .btn-ghost   { background: var(--bg);         color: var(--text); }
 

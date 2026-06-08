@@ -157,22 +157,26 @@ const MONTHS_FULL = ['January','February','March','April','May','June',
                      'July','August','September','October','November','December'];
 
 // Mirror of server-side resolveTemplates — used for live preview only
+let _previewSampleName = '';
+
 function resolveTemplates(text, now = new Date()) {
   if (!text) return text;
   return text
     .replace(/<day>([+-]\d+)?/g, (_, offset) => String(now.getDate() + (offset ? parseInt(offset,10) : 0)))
     .replace(/<weekday>/g, DAYS_FULL[now.getDay()])
     .replace(/<month>/g, MONTHS_FULL[now.getMonth()])
-    .replace(/<year>/g, String(now.getFullYear()));
+    .replace(/<year>/g, String(now.getFullYear()))
+    .replace(/<name>/g, _previewSampleName || 'Name');
 }
 
 function hasTemplates(text) {
-  return /<(day|weekday|month|year)>/.test(text || '');
+  return /<(day|weekday|month|year|name)>/.test(text || '');
 }
 
 // Template chips: { label, variable, hint(date) }
 function buildTemplateChips(now = new Date()) {
   return [
+    { var: '<name>',    hint: 'Contact name',             tip: 'Replaced with each recipient\'s name' },
     { var: '<weekday>', hint: DAYS_FULL[now.getDay()],   tip: 'Day name' },
     { var: '<day>',     hint: now.getDate(),              tip: 'Day of month' },
     { var: '<day>-1',   hint: now.getDate() - 1,         tip: 'Yesterday' },
@@ -191,7 +195,7 @@ function initTemplateBars() {
   const now = new Date();
   document.querySelectorAll('.template-bar').forEach((bar) => {
     const targetId  = bar.dataset.target;
-    const previewId = targetId === 'sendText' ? 'sendPreview' : 'schedPreview';
+    const previewId = bar.dataset.preview !== undefined ? bar.dataset.preview : 'schedPreview';
 
     buildTemplateChips(now).forEach(({ var: variable, hint, tip }) => {
       const chip = document.createElement('button');
@@ -214,10 +218,10 @@ function initTemplateBars() {
       bar.appendChild(chip);
     });
 
-    // Live preview on textarea input
-    const ta = document.getElementById(targetId);
-    if (ta) {
-      ta.addEventListener('input', () => updatePreview(ta, previewId));
+    // Live preview on textarea input (only if a preview element exists)
+    if (previewId) {
+      const ta = document.getElementById(targetId);
+      if (ta) ta.addEventListener('input', () => updatePreview(ta, previewId));
     }
   });
 }
@@ -231,6 +235,17 @@ function updatePreview(ta, previewId) {
   } else {
     preview.style.display = 'none';
   }
+}
+
+function _updateNameChipHint(sampleName) {
+  _previewSampleName = sampleName || '';
+  document.querySelectorAll('.tpl-chip').forEach((chip) => {
+    const varSpan = chip.querySelector('.tpl-chip-var');
+    if (varSpan && varSpan.textContent === '<name>') {
+      const valSpan = chip.querySelector('.tpl-chip-val');
+      if (valSpan) valSpan.textContent = `→ ${sampleName || 'Contact name'}`;
+    }
+  });
 }
 
 // Initialise after DOM is ready (called at bottom of file)
@@ -317,7 +332,7 @@ const tabBtns   = document.querySelectorAll('.tab-btn');
 const tabPanels = document.querySelectorAll('.tab-panel');
 
 // Tabs that require WhatsApp to be connected before they're usable
-const REQUIRES_CONNECTED = ['groups', 'send', 'schedule', 'attendance', 'messages'];
+const REQUIRES_CONNECTED = ['groups', 'send', 'schedule', 'messages'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let qrTimer = null;
@@ -424,9 +439,8 @@ tabBtns.forEach((btn) => {
     const tabId = btn.dataset.tab;
     document.getElementById(`tab-${tabId}`).classList.add('active');
     if (tabId === 'groups')     loadGroups();
-    if (tabId === 'send')       initSendTab();
+    if (tabId === 'send')       {/* send tab removed */}
     if (tabId === 'schedule')   initScheduleTab();
-    if (tabId === 'attendance') initAttendanceTab();
     if (tabId === 'messages')   initMessagesTab();
   });
 });
@@ -558,154 +572,6 @@ function buildGroupCard(group) {
   return card;
 }
 
-// ── Send Messages ─────────────────────────────────────────────────────────────
-const sendGroup     = document.getElementById('sendGroup');
-const sendGroupHint = document.getElementById('sendGroupHint');
-const sendText      = document.getElementById('sendText');
-const sendCharCount = document.getElementById('sendCharCount');
-const sendFile      = document.getElementById('sendFile');
-const filePickerLbl = document.getElementById('filePickerLabel');
-const filePreview   = document.getElementById('filePreview');
-const filePreviewImg  = document.getElementById('filePreviewImg');
-const filePreviewName = document.getElementById('filePreviewName');
-const filePreviewSize = document.getElementById('filePreviewSize');
-const removeFileBtn = document.getElementById('removeFileBtn');
-const sendBtn       = document.getElementById('sendBtn');
-const clearSendBtn  = document.getElementById('clearSendBtn');
-const sendResult    = document.getElementById('sendResult');
-
-let _sendFileData = null; // { base64, mimetype, filename }
-let _sendTabReady = false;
-
-async function initSendTab() {
-  if (_sendTabReady) return;
-  _sendTabReady = true;
-  await _loadSendGroups();
-}
-
-async function _loadSendGroups() {
-  try {
-    const res  = await fetch('/api/messages/groups');
-    const data = await res.json();
-    sendGroup.innerHTML = '<option value="">— select a group —</option>';
-    (data.groups || []).forEach((g) => {
-      const opt = document.createElement('option');
-      opt.value = g.name;
-      opt.textContent = `${g.name}  (${g.memberCount} members)`;
-      sendGroup.appendChild(opt);
-    });
-  } catch (e) {
-    sendGroup.innerHTML = '<option value="">Failed to load groups</option>';
-  }
-}
-
-sendGroup.addEventListener('change', () => {
-  sendGroupHint.textContent = '';
-});
-
-sendText.addEventListener('input', () => {
-  sendCharCount.textContent = `${sendText.value.length} characters`;
-});
-
-sendFile.addEventListener('change', () => {
-  const file = sendFile.files[0];
-  if (!file) return;
-
-  if (file.size > 16 * 1024 * 1024) {
-    showSendResult('error', 'File is too large (max 16 MB).');
-    sendFile.value = '';
-    return;
-  }
-
-  filePickerLbl.textContent = '📎 ' + file.name;
-  filePreviewName.textContent = file.name;
-  filePreviewSize.textContent = _formatBytes(file.size);
-
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const dataUrl  = e.target.result;
-    const [header, base64] = dataUrl.split(',');
-    const mimetype = header.match(/:(.*?);/)[1];
-    _sendFileData  = { base64, mimetype, filename: file.name };
-
-    if (mimetype.startsWith('image/')) {
-      filePreviewImg.src     = dataUrl;
-      filePreviewImg.style.display = 'block';
-    } else {
-      filePreviewImg.style.display = 'none';
-    }
-    filePreview.style.display = 'flex';
-  };
-  reader.readAsDataURL(file);
-});
-
-removeFileBtn.addEventListener('click', () => {
-  _sendFileData           = null;
-  sendFile.value          = '';
-  filePickerLbl.textContent = '📎 Choose file';
-  filePreview.style.display = 'none';
-  filePreviewImg.style.display = 'none';
-});
-
-sendBtn.addEventListener('click', async () => {
-  const groupName = sendGroup.value.trim();
-  const text      = sendText.value.trim();
-
-  if (!groupName)       return showSendResult('error', 'Please select a group.');
-  if (!text && !_sendFileData) return showSendResult('error', 'Please enter a message or attach a file.');
-
-  sendBtn.disabled    = true;
-  sendBtn.textContent = '⏳ Sending…';
-  sendResult.style.display = 'none';
-
-  try {
-    const body = { groupName, text };
-    if (_sendFileData) body.media = _sendFileData;
-
-    const res  = await fetch('/api/messages/send', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-    });
-    const data = await res.json();
-
-    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
-
-    // Build per-member result summary
-    const failRows = (data.results || [])
-      .filter((r) => !r.ok)
-      .map((r) => `<li>${_esc(r.name || r.phone)}: ${_esc(r.error)}</li>`)
-      .join('');
-
-    const html = `✅ Sent to <strong>${data.sent}</strong> of <strong>${data.total}</strong> members in <strong>${_esc(groupName)}</strong>`
-      + (failRows ? `<br/><small style="color:var(--danger)">Failed:<ul style="margin:4px 0 0 16px">${failRows}</ul></small>` : '');
-
-    showSendResult(data.failed === 0 ? 'ok' : 'error', html);
-  } catch (err) {
-    showSendResult('error', `❌ ${err.message}`);
-  } finally {
-    sendBtn.disabled    = false;
-    sendBtn.textContent = '📤 Send';
-  }
-});
-
-clearSendBtn.addEventListener('click', () => {
-  sendGroup.value   = '';
-  sendText.value    = '';
-  sendCharCount.textContent = '0 characters';
-  sendGroupHint.textContent = '';
-  removeFileBtn.click();
-  sendResult.style.display = 'none';
-  _sendTabReady = false; // re-fetch groups next open
-  _sendTabReady = true;
-});
-
-function showSendResult(type, html) {
-  sendResult.className    = `send-result-box ${type === 'ok' ? 'send-result-ok' : 'send-result-err'}`;
-  sendResult.innerHTML    = html;
-  sendResult.style.display = 'block';
-}
-
 function _formatBytes(bytes) {
   if (bytes < 1024)        return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -734,8 +600,9 @@ const schedFormBody    = document.getElementById('schedFormBody');
 const schedList        = document.getElementById('schedList');
 const schedCount       = document.getElementById('schedCount');
 
-let _schedFileData = null;
-let _schedTabReady = false;
+let _schedFileData  = null;
+let _schedTabReady  = false;
+let _schedGroupsData = [];
 
 async function initScheduleTab() {
   if (_schedTabReady) return;
@@ -747,17 +614,23 @@ async function initScheduleTab() {
 
 async function _loadSchedGroups() {
   try {
-    const res  = await fetch('/api/messages/groups');
+    const res  = await fetch('/api/groups');
     const data = await res.json();
+    _schedGroupsData = data.groups || [];
     schedGroup.innerHTML = '<option value="">— select a group —</option>';
-    (data.groups || []).forEach((g) => {
+    _schedGroupsData.forEach((g) => {
       const opt = document.createElement('option');
       opt.value = g.name;
-      opt.textContent = `${g.name}  (${g.memberCount} members)`;
+      opt.textContent = `${g.name}  (${g.members.length} members)`;
       schedGroup.appendChild(opt);
     });
   } catch (_) {}
 }
+
+schedGroup.addEventListener('change', () => {
+  const group = _schedGroupsData.find((g) => g.name === schedGroup.value);
+  _updateNameChipHint(group?.members?.[0]?.name || '');
+});
 
 // Schedule type radio → show/hide day/dom/once-date fields
 document.querySelectorAll('input[name="schedType"]').forEach((r) => {
@@ -858,6 +731,48 @@ schedSaveBtn.addEventListener('click', async () => {
 
 schedClearBtn.addEventListener('click', _schedClearForm);
 
+// Send Now
+const schedSendNowBtn = document.getElementById('schedSendNowBtn');
+schedSendNowBtn.addEventListener('click', async () => {
+  const groupName = schedGroup.value.trim();
+  const text      = schedText.value.trim();
+
+  if (!groupName) return _showSchedResult('error', 'Please select a group.');
+  if (!text && !_schedFileData) return _showSchedResult('error', 'Please enter a message or attach a file.');
+
+  schedSendNowBtn.disabled    = true;
+  schedSendNowBtn.textContent = '⏳ Sending…';
+  schedFormResult.style.display = 'none';
+
+  try {
+    const body = { groupName, text };
+    if (_schedFileData) body.media = _schedFileData;
+
+    const res  = await fetch('/api/messages/send', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+
+    const failRows = (data.results || [])
+      .filter((r) => !r.ok)
+      .map((r) => `<li>${_esc(r.name || r.phone)}: ${_esc(r.error)}</li>`)
+      .join('');
+
+    const html = `✅ Sent to <strong>${data.sent}</strong> of <strong>${data.total}</strong> members in <strong>${_esc(groupName)}</strong>`
+      + (failRows ? `<br/><small style="color:var(--danger)">Failed:<ul style="margin:4px 0 0 16px">${failRows}</ul></small>` : '');
+
+    _showSchedResult(data.failed === 0 ? 'ok' : 'error', html);
+  } catch (err) {
+    _showSchedResult('error', `❌ ${err.message}`);
+  } finally {
+    schedSendNowBtn.disabled    = false;
+    schedSendNowBtn.textContent = '📤 Send Now';
+  }
+});
+
 function _schedClearForm() {
   schedLabel.value = ''; schedGroup.value = ''; schedText.value = '';
   schedTime.value  = '09:00';
@@ -917,7 +832,7 @@ function _buildSchedCard(s) {
         <span>${nextRunStr}</span>
         <span style="color:#90a4ae">${lastRunStr}</span>
       </div>
-      ${preview ? `<div class="sched-card-preview">"${preview}"</div>` : ''}
+      ${preview ? `<div class="sched-card-preview">"${_esc(preview)}"</div>` : ''}
     </div>
     <div class="sched-card-actions">
       <button class="btn-toggle ${s.active ? 'active' : ''}" data-action="toggle">
@@ -968,230 +883,6 @@ function _updateTimezoneHint() {
   if (tzEl) tzEl.textContent = `Times are server-side (IST/Asia Kolkata by default)`;
 }
 
-// ── Attendance ────────────────────────────────────────────────────────────────
-const attGroup        = document.getElementById('attGroup');
-const attDate         = document.getElementById('attDate');
-const attLoadBtn      = document.getElementById('attLoadBtn');
-const attExportBtn    = document.getElementById('attExportBtn');
-const attStats        = document.getElementById('attStats');
-const attLoading      = document.getElementById('attLoading');
-const attError        = document.getElementById('attError');
-const attEmpty        = document.getElementById('attEmpty');
-const attTableWrap    = document.getElementById('attTableWrap');
-const attTbody        = document.getElementById('attTbody');
-const attMarkAll      = document.getElementById('attMarkAllPresent');
-const attClearAll     = document.getElementById('attClearAll');
-const cfgGroup        = document.getElementById('cfgGroup');
-const cfgPresent      = document.getElementById('cfgPresent');
-const cfgLate         = document.getElementById('cfgLate');
-const cfgAbsent       = document.getElementById('cfgAbsent');
-const cfgSaveBtn      = document.getElementById('cfgSaveBtn');
-const cfgResult       = document.getElementById('cfgResult');
-
-let _attCurrentData   = null;  // last loaded { date, group, members, summary }
-
-async function initAttendanceTab() {
-  // Set date to today if empty
-  if (!attDate.value) attDate.value = _todayStr();
-  await _populateAttGroupDropdowns();
-  attEmpty.style.display = 'block';
-}
-
-async function _populateAttGroupDropdowns() {
-  try {
-    const res  = await fetch('/api/messages/groups');
-    const data = await res.json();
-    const opts = '<option value="">— select —</option>' +
-      (data.groups || []).map((g) => `<option value="${_esc(g.name)}">${_esc(g.name)}</option>`).join('');
-    attGroup.innerHTML = opts;
-    cfgGroup.innerHTML = opts;
-    cfgGroup.addEventListener('change', _loadCfgForGroup);
-  } catch (_) {}
-}
-
-// ── Load attendance ────────────────────────────────────────────────────────────
-attLoadBtn.addEventListener('click', loadAttendance);
-
-async function loadAttendance() {
-  const group = attGroup.value;
-  const date  = attDate.value || _todayStr();
-  if (!group) { attError.textContent = 'Please select a group.'; attError.style.display = 'block'; return; }
-
-  attLoading.style.display   = 'block';
-  attError.style.display     = 'none';
-  attEmpty.style.display     = 'none';
-  attTableWrap.style.display = 'none';
-  attStats.style.display     = 'none';
-
-  try {
-    const res  = await fetch(`/api/attendance?group=${encodeURIComponent(group)}&date=${date}`);
-    if (!res.ok) throw new Error((await res.json()).error || `Error ${res.status}`);
-    const data = await res.json();
-    _attCurrentData = data;
-    attLoading.style.display = 'none';
-    _renderAttendance(data);
-  } catch (err) {
-    attLoading.style.display = 'none';
-    attError.textContent     = err.message;
-    attError.style.display   = 'block';
-  }
-}
-
-function _renderAttendance({ date, group, members, summary }) {
-  // Stats
-  document.getElementById('statPresent').textContent  = summary.present;
-  document.getElementById('statLate').textContent     = summary.late;
-  document.getElementById('statAbsent').textContent   = summary.absent;
-  document.getElementById('statUnmarked').textContent =
-    members.filter((m) => m.status === 'unmarked').length;
-  attStats.style.display = 'grid';
-
-  // Table
-  attTbody.innerHTML = '';
-  members.forEach((m, i) => attTbody.appendChild(_buildAttRow(m, i + 1, group, date)));
-
-  attTableWrap.style.display = 'block';
-}
-
-function _buildAttRow(m, idx, group, date) {
-  const tr = document.createElement('tr');
-
-  const statusHtml = `
-    <span class="status-pill ${m.status}">
-      ${{ present:'✅ Present', late:'⏰ Late', absent:'❌ Absent', unmarked:'— Unmarked' }[m.status] || m.status}
-    </span>
-    ${m.source ? `<span class="source-badge ${m.source}">${m.source}</span>` : ''}`;
-
-  const timeStr = m.timestamp
-    ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : '—';
-
-  tr.innerHTML = `
-    <td style="color:var(--text-muted)">${idx}</td>
-    <td><strong>${_esc(m.memberName)}</strong></td>
-    <td style="font-family:monospace;font-size:0.8rem">${_esc(m.memberPhone)}</td>
-    <td>${statusHtml}</td>
-    <td style="font-family:monospace">${_esc(m.code) || '—'}</td>
-    <td style="white-space:nowrap">${timeStr}</td>
-    <td>
-      <div class="att-action-btns">
-        <button class="att-btn btn-p"   data-status="present">✅</button>
-        <button class="att-btn btn-l"   data-status="late">⏰</button>
-        <button class="att-btn btn-a"   data-status="absent">❌</button>
-        <button class="att-btn btn-clr" data-status="clear">🗑</button>
-      </div>
-    </td>`;
-
-  tr.querySelectorAll('.att-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const status = btn.dataset.status;
-      try {
-        if (status === 'clear') {
-          await fetch('/api/attendance/unmark', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groupName: group, memberPhone: m.memberPhone, date }),
-          });
-        } else {
-          await fetch('/api/attendance/mark', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groupName: group, memberPhone: m.memberPhone, memberName: m.memberName, date, status }),
-          });
-        }
-        await loadAttendance();
-      } catch (err) { alert('Error: ' + err.message); }
-    });
-  });
-
-  return tr;
-}
-
-// Mark all unmarked as present
-attMarkAll.addEventListener('click', async () => {
-  if (!_attCurrentData) return;
-  const { group, date, members } = _attCurrentData;
-  const unmarked = members.filter((m) => m.status === 'unmarked');
-  if (!unmarked.length) return;
-  if (!confirm(`Mark ${unmarked.length} unmarked members as Present?`)) return;
-  for (const m of unmarked) {
-    await fetch('/api/attendance/mark', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupName: group, memberPhone: m.memberPhone, memberName: m.memberName, date, status: 'present' }),
-    });
-  }
-  await loadAttendance();
-});
-
-// Clear all records for the day
-attClearAll.addEventListener('click', async () => {
-  if (!_attCurrentData) return;
-  const { group, date, members } = _attCurrentData;
-  if (!confirm(`Remove all attendance records for ${group} on ${date}?`)) return;
-  for (const m of members.filter((m) => m.status !== 'unmarked')) {
-    await fetch('/api/attendance/unmark', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupName: group, memberPhone: m.memberPhone, date }),
-    });
-  }
-  await loadAttendance();
-});
-
-// Export CSV
-attExportBtn.addEventListener('click', () => {
-  const group = attGroup.value;
-  const date  = attDate.value || _todayStr();
-  if (!group) return;
-  window.location.href = `/api/attendance/export?group=${encodeURIComponent(group)}&from=${date}&to=${date}`;
-});
-
-// ── Auto-refresh on incoming attendance ────────────────────────────────────────
-socket.on('attendance:new', (record) => {
-  // Refresh the table if we're looking at the affected group/date
-  const viewDate  = attDate.value || _todayStr();
-  const viewGroup = attGroup.value;
-  if (record.groupName === viewGroup && record.date === viewDate) {
-    loadAttendance();
-  }
-});
-
-// ── Code config ────────────────────────────────────────────────────────────────
-async function _loadCfgForGroup() {
-  const group = cfgGroup.value;
-  if (!group) return;
-  try {
-    const res  = await fetch(`/api/attendance/config?group=${encodeURIComponent(group)}`);
-    const cfg  = await res.json();
-    cfgPresent.value = (cfg.presentCodes || []).join(', ');
-    cfgLate.value    = (cfg.lateCodes    || []).join(', ');
-    cfgAbsent.value  = (cfg.absentCodes  || []).join(', ');
-  } catch (_) {}
-}
-
-cfgSaveBtn.addEventListener('click', async () => {
-  const groupName = cfgGroup.value;
-  if (!groupName) { cfgResult.className = 'send-result-box send-result-err'; cfgResult.textContent = 'Select a group.'; cfgResult.style.display = 'block'; return; }
-  try {
-    const body = {
-      groupName,
-      presentCodes: cfgPresent.value.split(',').map((s) => s.trim()).filter(Boolean),
-      lateCodes:    cfgLate.value.split(',').map((s) => s.trim()).filter(Boolean),
-      absentCodes:  cfgAbsent.value.split(',').map((s) => s.trim()).filter(Boolean),
-    };
-    const res = await fetch('/api/attendance/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error((await res.json()).error);
-    cfgResult.className    = 'send-result-box send-result-ok';
-    cfgResult.textContent  = '✅ Codes saved';
-    cfgResult.style.display = 'block';
-  } catch (err) {
-    cfgResult.className    = 'send-result-box send-result-err';
-    cfgResult.textContent  = '❌ ' + err.message;
-    cfgResult.style.display = 'block';
-  }
-});
-
-function _todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 // ── View Messages tab ─────────────────────────────────────────────────────────
 let _vmsgTabReady  = false;
 let _vmsgGroupsData = [];      // [{ name, members:[{name,phone}] }] from sheets
@@ -1225,13 +916,50 @@ const msgCodeSel           = document.getElementById('msgCodeSel');
 const msgNewCode           = document.getElementById('msgNewCode');
 const msgConfirmCodeBtn    = document.getElementById('msgConfirmCodeBtn');
 const msgMarkResult        = document.getElementById('msgMarkResult');
-const msgForwardCard       = document.getElementById('msgForwardCard');
-const msgForwardGroup      = document.getElementById('msgForwardGroup');
-const msgForwardCountLabel = document.getElementById('msgForwardCountLabel');
-const msgCaption           = document.getElementById('msgCaption');
-const msgForwardBtn        = document.getElementById('msgForwardBtn');
-const msgClearSelBtn       = document.getElementById('msgClearSelBtn');
-const msgForwardResult     = document.getElementById('msgForwardResult');
+const msgForwardCard          = document.getElementById('msgForwardCard');
+const msgForwardGroup         = document.getElementById('msgForwardGroup');
+const msgForwardCountLabel    = document.getElementById('msgForwardCountLabel');
+const msgFwdContactsSection   = document.getElementById('msgFwdContactsSection');
+const msgFwdContactsList      = document.getElementById('msgFwdContactsList');
+const msgFwdContactsHint      = document.getElementById('msgFwdContactsHint');
+const msgFwdSelAll            = document.getElementById('msgFwdSelAll');
+const msgFwdSelNone           = document.getElementById('msgFwdSelNone');
+const msgPrefix               = document.getElementById('msgPrefix');
+const msgCaption              = document.getElementById('msgCaption');
+const msgForwardBtn           = document.getElementById('msgForwardBtn');
+const msgClearSelBtn          = document.getElementById('msgClearSelBtn');
+const msgForwardResult        = document.getElementById('msgForwardResult');
+
+let _fwdMembers = []; // [{name, phone}] for the selected target group
+
+function _fwdRenderContacts(members) {
+  _fwdMembers = members;
+  msgFwdContactsList.innerHTML = '';
+  members.forEach((m) => {
+    const label = document.createElement('label');
+    label.className = 'vmsg-contact-chip';
+    label.innerHTML = `<input type="checkbox" class="fwd-contact-cb" data-phone="${_esc(m.phone)}" data-name="${_esc(m.name || '')}" checked />${_esc(m.name || m.phone)}`;
+    msgFwdContactsList.appendChild(label);
+  });
+  _fwdUpdateHint();
+}
+
+function _fwdUpdateHint() {
+  const total    = msgFwdContactsList.querySelectorAll('.fwd-contact-cb').length;
+  const selected = msgFwdContactsList.querySelectorAll('.fwd-contact-cb:checked').length;
+  msgFwdContactsHint.textContent = `${selected} of ${total} contacts selected`;
+}
+
+msgFwdContactsList.addEventListener('change', _fwdUpdateHint);
+
+msgFwdSelAll.addEventListener('click', () => {
+  msgFwdContactsList.querySelectorAll('.fwd-contact-cb').forEach((cb) => cb.checked = true);
+  _fwdUpdateHint();
+});
+msgFwdSelNone.addEventListener('click', () => {
+  msgFwdContactsList.querySelectorAll('.fwd-contact-cb').forEach((cb) => cb.checked = false);
+  _fwdUpdateHint();
+});
 
 // ── Date preset helpers ───────────────────────────────────────────────────────
 const _vmsgPad = (n) => String(n).padStart(2, '0');
@@ -1325,6 +1053,20 @@ msgGroupSel.addEventListener('change', () => {
   _vmsgContacts = group ? group.members : [];
   _vmsgRenderContacts();
   _vmsgUpdateContactsHint();
+  _updateNameChipHint(group?.members?.[0]?.name || '');
+});
+
+// ── Forward group change → load target contacts ───────────────────────────────
+msgForwardGroup.addEventListener('change', () => {
+  const group = _vmsgGroupsData.find((g) => g.name === msgForwardGroup.value);
+  if (group && group.members.length) {
+    _fwdRenderContacts(group.members);
+    msgFwdContactsSection.style.display = 'block';
+  } else {
+    msgFwdContactsSection.style.display = 'none';
+    msgFwdContactsList.innerHTML = '';
+    _fwdMembers = [];
+  }
 });
 
 function _vmsgRenderContacts() {
@@ -1730,6 +1472,9 @@ msgForwardBtn.addEventListener('click', async () => {
       body: JSON.stringify({
         messageIds:      Array.from(_vmsgSelected),
         targetGroupName: msgForwardGroup.value,
+        contacts:        Array.from(msgFwdContactsList.querySelectorAll('.fwd-contact-cb:checked'))
+                           .map((cb) => ({ name: cb.dataset.name, phone: cb.dataset.phone })),
+        prefix:          msgPrefix.value.trim(),
         caption:         msgCaption.value.trim(),
       }),
     });

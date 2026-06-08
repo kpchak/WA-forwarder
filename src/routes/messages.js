@@ -28,11 +28,8 @@ router.post('/send', async (req, res) => {
       if (bytes > 16 * 1024 * 1024) return res.status(400).json({ error: 'Attachment exceeds 16 MB limit' });
     }
 
-    // Resolve template variables at actual send time
-    const now         = new Date();
-    const resolvedText = resolveTemplates(text, now);
-
-    const client  = wa.getClient();
+    const now    = new Date();
+    const client = wa.getClient();
     const results = [];
 
     for (const member of group.members) {
@@ -41,6 +38,8 @@ router.post('/send', async (req, res) => {
         results.push({ name: member.name, phone: member.phone, ok: false, error: 'Invalid phone number' });
         continue;
       }
+
+      const resolvedText = resolveTemplates(text, now, member.name || '');
 
       try {
         if (media) {

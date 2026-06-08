@@ -110,14 +110,14 @@ async function _execute(id) {
       return;
     }
 
-    const client      = wa.getClient();
-    const now         = new Date();
-    const resolvedText = resolveTemplates(schedule.text, now);
+    const client = wa.getClient();
+    const now    = new Date();
     let sent = 0, failed = 0;
 
     for (const member of group.members) {
       const waId = _toWAId(member.phone);
       if (!waId) { failed++; continue; }
+      const resolvedText = resolveTemplates(schedule.text, now, member.name || '');
       try {
         if (schedule.media) {
           const media = new MessageMedia(
