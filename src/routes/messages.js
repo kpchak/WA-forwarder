@@ -11,7 +11,7 @@ const { resolveTemplates }       = require('../utils/templates');
 // Sends a message to every phone number in the named sheet group.
 router.post('/send', async (req, res) => {
   try {
-    const { groupName, text, media } = req.body;
+    const { groupName, text, media, memberPhones } = req.body;
 
     if (!groupName)             return res.status(400).json({ error: 'groupName is required' });
     if (!text && !media)        return res.status(400).json({ error: 'Provide text, media, or both' });
@@ -21,6 +21,12 @@ router.post('/send', async (req, res) => {
     const group  = groups.find((g) => g.name === groupName);
     if (!group) return res.status(404).json({ error: `Group "${groupName}" not found in saved data` });
     if (!group.members.length) return res.status(400).json({ error: `Group "${groupName}" has no members` });
+
+    const members = Array.isArray(memberPhones) && memberPhones.length
+      ? group.members.filter((m) => memberPhones.includes(m.phone))
+      : group.members;
+
+    if (!members.length) return res.status(400).json({ error: 'No matching recipients found' });
 
     // Validate media size once (16 MB limit)
     if (media) {
@@ -32,7 +38,7 @@ router.post('/send', async (req, res) => {
     const client = wa.getClient();
     const results = [];
 
-    for (const member of group.members) {
+    for (const member of members) {
       const waId = _toWAId(member.phone);
       if (!waId) {
         results.push({ name: member.name, phone: member.phone, ok: false, error: 'Invalid phone number' });

@@ -227,9 +227,8 @@
       <div class="send-form">
         <div class="form-group">
           <label class="form-label" id="msgForwardCountLabel">0 messages selected — forward to:</label>
-          <select id="msgForwardGroup" class="form-select">
-            <option value="">— select target group —</option>
-          </select>
+          <div id="msgFwdGroupPicker" class="vmsg-contacts-list" style="max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:4px 8px;min-height:36px"></div>
+          <span class="form-hint" id="msgFwdGroupPickerHint">No groups loaded</span>
         </div>
 
         <!-- Contact selector -->
@@ -288,6 +287,19 @@
           <select id="schedGroup" class="form-select">
             <option value="">— select a group —</option>
           </select>
+        </div>
+
+        <!-- Recipients (shown after group is selected) -->
+        <div id="schedMembersSection" class="form-group" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label class="form-label" style="margin:0">Recipients</label>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost" id="schedSelAll"  style="padding:4px 12px;font-size:0.78rem">✓ All</button>
+              <button class="btn btn-ghost" id="schedSelNone" style="padding:4px 12px;font-size:0.78rem">✕ None</button>
+            </div>
+          </div>
+          <div id="schedMembersList" class="vmsg-contacts-list"></div>
+          <span class="form-hint" id="schedMembersHint"></span>
         </div>
 
         <!-- Message -->

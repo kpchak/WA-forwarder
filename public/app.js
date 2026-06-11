@@ -600,9 +600,16 @@ const schedFormBody    = document.getElementById('schedFormBody');
 const schedList        = document.getElementById('schedList');
 const schedCount       = document.getElementById('schedCount');
 
-let _schedFileData  = null;
-let _schedTabReady  = false;
+let _schedFileData   = null;
+let _schedTabReady   = false;
 let _schedGroupsData = [];
+let _schedMembers    = [];  // current group's members for recipient selection
+
+const schedMembersSection = document.getElementById('schedMembersSection');
+const schedMembersList    = document.getElementById('schedMembersList');
+const schedMembersHint    = document.getElementById('schedMembersHint');
+const schedSelAll         = document.getElementById('schedSelAll');
+const schedSelNone        = document.getElementById('schedSelNone');
 
 async function initScheduleTab() {
   if (_schedTabReady) return;
@@ -629,7 +636,52 @@ async function _loadSchedGroups() {
 
 schedGroup.addEventListener('change', () => {
   const group = _schedGroupsData.find((g) => g.name === schedGroup.value);
+  _schedMembers = group ? group.members : [];
+  _schedRenderMembers();
   _updateNameChipHint(group?.members?.[0]?.name || '');
+});
+
+function _schedRenderMembers() {
+  if (!_schedMembers.length) {
+    schedMembersSection.style.display = 'none';
+    schedMembersList.innerHTML = '';
+    return;
+  }
+  schedMembersSection.style.display = 'block';
+  schedMembersList.innerHTML = '';
+  for (const m of _schedMembers) {
+    const label = document.createElement('label');
+    label.className = 'vmsg-contact-item';
+    const cb = document.createElement('input');
+    cb.type    = 'checkbox';
+    cb.checked = true;
+    cb.dataset.phone = m.phone;
+    cb.addEventListener('change', _schedUpdateMembersHint);
+    const nameSpan  = document.createElement('span');
+    nameSpan.className = 'vmsg-contact-name';
+    nameSpan.textContent = m.name || m.phone;
+    const phoneSpan = document.createElement('span');
+    phoneSpan.className = 'vmsg-contact-phone';
+    phoneSpan.textContent = m.phone;
+    label.append(cb, nameSpan, phoneSpan);
+    schedMembersList.appendChild(label);
+  }
+  _schedUpdateMembersHint();
+}
+
+function _schedUpdateMembersHint() {
+  const total   = schedMembersList.querySelectorAll('input[type="checkbox"]').length;
+  const checked = schedMembersList.querySelectorAll('input[type="checkbox"]:checked').length;
+  schedMembersHint.textContent = `${checked} of ${total} recipients selected`;
+}
+
+schedSelAll.addEventListener('click', () => {
+  schedMembersList.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = true; });
+  _schedUpdateMembersHint();
+});
+schedSelNone.addEventListener('click', () => {
+  schedMembersList.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
+  _schedUpdateMembersHint();
 });
 
 // Schedule type radio → show/hide day/dom/once-date fields
@@ -699,16 +751,21 @@ schedSaveBtn.addEventListener('click', async () => {
     if (runAt <= new Date()) return _showSchedResult('error', 'Please pick a future date and time.');
   }
 
+  const selectedPhones = Array.from(schedMembersList.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.dataset.phone);
+  const allPhones      = Array.from(schedMembersList.querySelectorAll('input[type="checkbox"]')).map((cb) => cb.dataset.phone);
+  const memberPhones   = selectedPhones.length && selectedPhones.length < allPhones.length ? selectedPhones : null;
+
   const body = {
     groupName,
-    label:       schedLabel.value.trim(),
+    label:        schedLabel.value.trim(),
     text,
-    media:       _schedFileData,
+    media:        _schedFileData,
     scheduleType: type,
-    time:        schedTime.value,
-    date:        type === 'once' ? document.getElementById('schedOnceDate').value : undefined,
+    time:         schedTime.value,
+    date:         type === 'once' ? document.getElementById('schedOnceDate').value : undefined,
     days,
-    dayOfMonth:  parseInt(document.getElementById('schedDom').value, 10) || 1,
+    dayOfMonth:   parseInt(document.getElementById('schedDom').value, 10) || 1,
+    memberPhones,
   };
 
   schedSaveBtn.disabled    = true;
@@ -745,8 +802,13 @@ schedSendNowBtn.addEventListener('click', async () => {
   schedFormResult.style.display = 'none';
 
   try {
+    const selectedPhones = Array.from(schedMembersList.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.dataset.phone);
+    const allPhones      = Array.from(schedMembersList.querySelectorAll('input[type="checkbox"]')).map((cb) => cb.dataset.phone);
+    const memberPhones   = selectedPhones.length && selectedPhones.length < allPhones.length ? selectedPhones : null;
+
     const body = { groupName, text };
     if (_schedFileData) body.media = _schedFileData;
+    if (memberPhones)   body.memberPhones = memberPhones;
 
     const res  = await fetch('/api/messages/send', {
       method:  'POST',
@@ -782,6 +844,10 @@ function _schedClearForm() {
   schedDaysGroup.style.display = 'none'; schedDomGroup.style.display = 'none';
   schedRemoveFile.click();
   schedFormResult.style.display = 'none';
+  _schedMembers = [];
+  schedMembersSection.style.display = 'none';
+  schedMembersList.innerHTML = '';
+  schedMembersHint.textContent = '';
 }
 
 // Load / render schedule list
@@ -824,12 +890,17 @@ function _buildSchedCard(s) {
   const lastRunStr = s.lastRun ? `Last: ${new Date(s.lastRun).toLocaleString()}` : 'Never run';
   const preview    = s.text ? (s.text.length > 80 ? s.text.slice(0, 80) + '…' : s.text) : (s.media ? `📎 ${s.media.filename}` : '');
 
+  const recipientStr = s.memberPhones?.length
+    ? `👥 ${s.memberPhones.length} recipient${s.memberPhones.length !== 1 ? 's' : ''}`
+    : `👥 All members`;
+
   card.innerHTML = `
     <div class="sched-card-body">
       <div class="sched-card-title">${title} <span style="font-weight:400;color:var(--text-muted);font-size:0.82rem">— ${s.groupName}</span></div>
       <div class="sched-card-meta">
         <span>🕐 ${whenStr}</span>
         <span>${nextRunStr}</span>
+        <span>${recipientStr}</span>
         <span style="color:#90a4ae">${lastRunStr}</span>
       </div>
       ${preview ? `<div class="sched-card-preview">"${_esc(preview)}"</div>` : ''}
@@ -917,7 +988,8 @@ const msgNewCode           = document.getElementById('msgNewCode');
 const msgConfirmCodeBtn    = document.getElementById('msgConfirmCodeBtn');
 const msgMarkResult        = document.getElementById('msgMarkResult');
 const msgForwardCard          = document.getElementById('msgForwardCard');
-const msgForwardGroup         = document.getElementById('msgForwardGroup');
+const msgFwdGroupPicker       = document.getElementById('msgFwdGroupPicker');
+const msgFwdGroupPickerHint   = document.getElementById('msgFwdGroupPickerHint');
 const msgForwardCountLabel    = document.getElementById('msgForwardCountLabel');
 const msgFwdContactsSection   = document.getElementById('msgFwdContactsSection');
 const msgFwdContactsList      = document.getElementById('msgFwdContactsList');
@@ -1034,14 +1106,16 @@ async function _vmsgLoadGroups() {
       msgGroupSel.appendChild(opt);
     }
 
-    // Populate forward target with same data
-    msgForwardGroup.innerHTML = '<option value="">— select target group —</option>';
+    // Populate forward group picker with checkboxes
+    msgFwdGroupPicker.innerHTML = '';
     for (const g of _vmsgGroupsData) {
-      const opt = document.createElement('option');
-      opt.value       = g.name;
-      opt.textContent = `${g.name} (${g.members.length} members)`;
-      msgForwardGroup.appendChild(opt);
+      const label = document.createElement('label');
+      label.className = 'vmsg-contact-chip';
+      label.innerHTML = `<input type="checkbox" class="fwd-group-cb" data-group="${_esc(g.name)}" />${_esc(g.name)} <span style="color:var(--text-muted);font-size:0.78rem">(${g.members.length})</span>`;
+      msgFwdGroupPicker.appendChild(label);
     }
+    msgFwdGroupPickerHint.textContent = `0 of ${_vmsgGroupsData.length} groups selected`;
+    msgFwdGroupPicker.addEventListener('change', _fwdOnGroupChange);
   } catch (err) {
     msgGroupSel.innerHTML = `<option value="">⚠ ${err.message}</option>`;
   }
@@ -1056,18 +1130,33 @@ msgGroupSel.addEventListener('change', () => {
   _updateNameChipHint(group?.members?.[0]?.name || '');
 });
 
-// ── Forward group change → load target contacts ───────────────────────────────
-msgForwardGroup.addEventListener('change', () => {
-  const group = _vmsgGroupsData.find((g) => g.name === msgForwardGroup.value);
-  if (group && group.members.length) {
-    _fwdRenderContacts(group.members);
-    msgFwdContactsSection.style.display = 'block';
-  } else {
+// ── Forward group picker → merge contacts from all checked groups ─────────────
+function _fwdOnGroupChange() {
+  const checkedNames = Array.from(msgFwdGroupPicker.querySelectorAll('.fwd-group-cb:checked')).map((cb) => cb.dataset.group);
+  const total        = msgFwdGroupPicker.querySelectorAll('.fwd-group-cb').length;
+  msgFwdGroupPickerHint.textContent = `${checkedNames.length} of ${total} group${total !== 1 ? 's' : ''} selected`;
+
+  if (!checkedNames.length) {
     msgFwdContactsSection.style.display = 'none';
     msgFwdContactsList.innerHTML = '';
     _fwdMembers = [];
+    return;
   }
-});
+
+  // Merge members from all selected groups, deduplicated by phone
+  const seen = new Set();
+  const merged = [];
+  for (const name of checkedNames) {
+    const group = _vmsgGroupsData.find((g) => g.name === name);
+    if (!group) continue;
+    for (const m of group.members) {
+      if (!seen.has(m.phone)) { seen.add(m.phone); merged.push(m); }
+    }
+  }
+
+  _fwdRenderContacts(merged);
+  msgFwdContactsSection.style.display = 'block';
+}
 
 function _vmsgRenderContacts() {
   if (!_vmsgContacts.length) {
@@ -1461,8 +1550,12 @@ msgClearSelBtn.addEventListener('click', () => {
 });
 
 msgForwardBtn.addEventListener('click', async () => {
-  if (!_vmsgSelected.size)    return _vmsgSetFwdResult('error', 'No messages selected.');
-  if (!msgForwardGroup.value) return _vmsgSetFwdResult('error', 'Please select a target group.');
+  if (!_vmsgSelected.size) return _vmsgSetFwdResult('error', 'No messages selected.');
+  const checkedGroups = msgFwdGroupPicker.querySelectorAll('.fwd-group-cb:checked');
+  if (!checkedGroups.length) return _vmsgSetFwdResult('error', 'Please select at least one target group.');
+  const contacts = Array.from(msgFwdContactsList.querySelectorAll('.fwd-contact-cb:checked'))
+                     .map((cb) => ({ name: cb.dataset.name, phone: cb.dataset.phone }));
+  if (!contacts.length) return _vmsgSetFwdResult('error', 'No recipients selected.');
 
   msgForwardBtn.disabled = true; msgForwardBtn.textContent = '⏳ Forwarding…';
   msgForwardResult.style.display = 'none';
@@ -1470,12 +1563,10 @@ msgForwardBtn.addEventListener('click', async () => {
     const res  = await fetch('/api/chat-messages/forward', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messageIds:      Array.from(_vmsgSelected),
-        targetGroupName: msgForwardGroup.value,
-        contacts:        Array.from(msgFwdContactsList.querySelectorAll('.fwd-contact-cb:checked'))
-                           .map((cb) => ({ name: cb.dataset.name, phone: cb.dataset.phone })),
-        prefix:          msgPrefix.value.trim(),
-        caption:         msgCaption.value.trim(),
+        messageIds: Array.from(_vmsgSelected),
+        contacts,
+        prefix:     msgPrefix.value.trim(),
+        caption:    msgCaption.value.trim(),
       }),
     });
     const data = await res.json();

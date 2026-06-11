@@ -110,18 +110,19 @@ router.post('/forward', async (req, res) => {
   try {
     if (wa.getState() !== 'ready') return res.status(503).json({ error: 'WhatsApp not connected' });
     const { messageIds, targetGroupName, contacts, prefix, caption } = req.body;
-    console.log('[Forward] prefix=%j  caption=%j  contacts[0]=%j', prefix, caption, contacts?.[0]);
+    console.log('[Forward] prefix=%j  caption=%j  contacts=%d', prefix, caption, contacts?.length ?? 0);
     if (!messageIds?.length) return res.status(400).json({ error: 'messageIds required' });
-    if (!targetGroupName)    return res.status(400).json({ error: 'targetGroupName required' });
+    if (!contacts?.length && !targetGroupName) return res.status(400).json({ error: 'contacts or targetGroupName required' });
 
-    const groups = await sheets.fetchGroups(false);
-    const group  = groups.find((g) => g.name === targetGroupName);
-    if (!group) return res.status(404).json({ error: `Group "${targetGroupName}" not found` });
-
-    // Use explicitly selected contacts if provided, otherwise all group members
-    const members = (contacts?.length)
-      ? contacts
-      : group.members;
+    let members;
+    if (contacts?.length) {
+      members = contacts;
+    } else {
+      const groups = await sheets.fetchGroups(false);
+      const group  = groups.find((g) => g.name === targetGroupName);
+      if (!group) return res.status(404).json({ error: `Group "${targetGroupName}" not found` });
+      members = group.members;
+    }
     if (!members.length) return res.status(400).json({ error: 'No contacts to send to' });
 
     const client = wa.getClient();

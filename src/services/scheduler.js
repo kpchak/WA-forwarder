@@ -35,6 +35,7 @@ function create(data) {
     label:        (data.label || '').trim(),
     text:         (data.text  || '').trim(),
     media:        data.media  || null,    // { base64, mimetype, filename }
+    memberPhones: Array.isArray(data.memberPhones) && data.memberPhones.length ? data.memberPhones : null,
     scheduleType: data.scheduleType,      // once | daily | weekly | monthly
     time:         data.time,              // "HH:MM"
     date:         data.date   || null,    // once: "YYYY-MM-DD"
@@ -110,11 +111,20 @@ async function _execute(id) {
       return;
     }
 
+    const members = schedule.memberPhones
+      ? group.members.filter((m) => schedule.memberPhones.includes(m.phone))
+      : group.members;
+
+    if (!members.length) {
+      console.warn(`[Scheduler] No matching recipients for schedule "${label}" — skipped`);
+      return;
+    }
+
     const client = wa.getClient();
     const now    = new Date();
     let sent = 0, failed = 0;
 
-    for (const member of group.members) {
+    for (const member of members) {
       const waId = _toWAId(member.phone);
       if (!waId) { failed++; continue; }
       const resolvedText = resolveTemplates(schedule.text, now, member.name || '');
