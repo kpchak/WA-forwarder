@@ -29,9 +29,15 @@ function create(data) {
   _validateInput(data);
   const cronExpr = _buildCron(data.scheduleType, data.time, data.days, data.dayOfMonth, data.date);
 
+  // Normalize: always store groupNames as array; keep groupName for backward compat
+  const groupNames = Array.isArray(data.groupNames) && data.groupNames.length
+    ? data.groupNames
+    : (data.groupName ? [data.groupName] : []);
+
   const schedule = {
     id:           Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-    groupName:    data.groupName,
+    groupName:    groupNames[0] || '',   // first group (legacy / display)
+    groupNames,
     label:        (data.label || '').trim(),
     text:         (data.text  || '').trim(),
     media:        data.media  || null,    // { base64, mimetype, filename }
@@ -92,7 +98,10 @@ async function _execute(id) {
   const schedule = _schedules.find((s) => s.id === id);
   if (!schedule || !schedule.active) return;
 
-  const label = schedule.label || `${schedule.groupName} (${schedule.scheduleType})`;
+  const groupLabel = schedule.groupNames?.length > 1
+    ? schedule.groupNames.join(', ')
+    : (schedule.groupName || schedule.groupNames?.[0] || '?');
+  const label = schedule.label || `${groupLabel} (${schedule.scheduleType})`;
   console.log(`[Scheduler] ▶ Firing: ${label}`);
 
   const wa = require('../whatsapp/client');
@@ -104,16 +113,29 @@ async function _execute(id) {
   try {
     const sheets = require('./sheets');
     const groups = await sheets.fetchGroups(false);
-    const group  = groups.find((g) => g.name === schedule.groupName);
 
-    if (!group || !group.members.length) {
-      console.error(`[Scheduler] Group "${schedule.groupName}" not found or empty — skipped`);
+    // Support groupNames array (new) or single groupName (legacy)
+    const names = schedule.groupNames?.length ? schedule.groupNames : [schedule.groupName];
+
+    // Merge and dedupe members from all target groups
+    const seen = new Set();
+    let allMembers = [];
+    for (const name of names) {
+      const group = groups.find((g) => g.name === name);
+      if (!group) { console.error(`[Scheduler] Group "${name}" not found — skipping`); continue; }
+      for (const m of group.members) {
+        if (!seen.has(m.phone)) { seen.add(m.phone); allMembers.push(m); }
+      }
+    }
+
+    if (!allMembers.length) {
+      console.error(`[Scheduler] No members found in groups [${names.join(', ')}] — skipped`);
       return;
     }
 
     const members = schedule.memberPhones
-      ? group.members.filter((m) => schedule.memberPhones.includes(m.phone))
-      : group.members;
+      ? allMembers.filter((m) => schedule.memberPhones.includes(m.phone))
+      : allMembers;
 
     if (!members.length) {
       console.warn(`[Scheduler] No matching recipients for schedule "${label}" — skipped`);
@@ -247,7 +269,8 @@ function _toWAId(raw) {
 }
 
 function _validateInput(data) {
-  if (!data.groupName)    throw new Error('groupName is required');
+  const hasGroup = (Array.isArray(data.groupNames) && data.groupNames.length) || data.groupName;
+  if (!hasGroup)          throw new Error('groupName or groupNames is required');
   if (!data.scheduleType) throw new Error('scheduleType is required');
   if (!data.time)         throw new Error('time is required');
   if (!data.text && !data.media) throw new Error('Provide text or media');

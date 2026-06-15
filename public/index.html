@@ -281,12 +281,13 @@
           <input type="text" id="schedLabel" class="form-input" placeholder="e.g. Morning reminder" />
         </div>
 
-        <!-- Group -->
+        <!-- Groups (multi-select) -->
         <div class="form-group">
-          <label class="form-label" for="schedGroup">Group</label>
-          <select id="schedGroup" class="form-select">
-            <option value="">— select a group —</option>
-          </select>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label class="form-label" style="margin:0">Groups</label>
+            <span class="form-hint" id="schedGroupPickerHint" style="margin:0">No groups loaded</span>
+          </div>
+          <div id="schedGroupPicker" class="vmsg-contacts-list" style="max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:4px 8px;min-height:40px"></div>
         </div>
 
         <!-- Recipients (shown after group is selected) -->
@@ -407,6 +408,6 @@
 </div><!-- /.app -->
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

@@ -11,20 +11,35 @@ const { resolveTemplates }       = require('../utils/templates');
 // Sends a message to every phone number in the named sheet group.
 router.post('/send', async (req, res) => {
   try {
-    const { groupName, text, media, memberPhones } = req.body;
+    const { groupName, groupNames, text, media, memberPhones } = req.body;
 
-    if (!groupName)             return res.status(400).json({ error: 'groupName is required' });
+    // Accept groupNames (array) or legacy groupName (string)
+    const names = Array.isArray(groupNames) && groupNames.length
+      ? groupNames
+      : (groupName ? [groupName] : []);
+
+    if (!names.length)          return res.status(400).json({ error: 'groupName or groupNames is required' });
     if (!text && !media)        return res.status(400).json({ error: 'Provide text, media, or both' });
     if (wa.getState() !== 'ready') return res.status(503).json({ error: 'WhatsApp is not connected' });
 
-    const groups = await sheets.fetchGroups(false);
-    const group  = groups.find((g) => g.name === groupName);
-    if (!group) return res.status(404).json({ error: `Group "${groupName}" not found in saved data` });
-    if (!group.members.length) return res.status(400).json({ error: `Group "${groupName}" has no members` });
+    const allGroups = await sheets.fetchGroups(false);
 
-    const members = Array.isArray(memberPhones) && memberPhones.length
-      ? group.members.filter((m) => memberPhones.includes(m.phone))
-      : group.members;
+    // Merge members from all selected groups, deduplicated by phone
+    const seen = new Set();
+    let members = [];
+    for (const name of names) {
+      const group = allGroups.find((g) => g.name === name);
+      if (!group) return res.status(404).json({ error: `Group "${name}" not found in saved data` });
+      for (const m of group.members) {
+        if (!seen.has(m.phone)) { seen.add(m.phone); members.push(m); }
+      }
+    }
+
+    if (!members.length) return res.status(400).json({ error: 'Selected group(s) have no members' });
+
+    if (Array.isArray(memberPhones) && memberPhones.length) {
+      members = members.filter((m) => memberPhones.includes(m.phone));
+    }
 
     if (!members.length) return res.status(400).json({ error: 'No matching recipients found' });
 

@@ -579,7 +579,8 @@ function _formatBytes(bytes) {
 }
 
 // ── Schedule Messages ─────────────────────────────────────────────────────────
-const schedGroup       = document.getElementById('schedGroup');
+const schedGroupPicker     = document.getElementById('schedGroupPicker');
+const schedGroupPickerHint = document.getElementById('schedGroupPickerHint');
 const schedLabel       = document.getElementById('schedLabel');
 const schedText        = document.getElementById('schedText');
 const schedFile        = document.getElementById('schedFile');
@@ -624,22 +625,47 @@ async function _loadSchedGroups() {
     const res  = await fetch('/api/groups');
     const data = await res.json();
     _schedGroupsData = data.groups || [];
-    schedGroup.innerHTML = '<option value="">— select a group —</option>';
-    _schedGroupsData.forEach((g) => {
-      const opt = document.createElement('option');
-      opt.value = g.name;
-      opt.textContent = `${g.name}  (${g.members.length} members)`;
-      schedGroup.appendChild(opt);
-    });
+    schedGroupPicker.innerHTML = '';
+    if (!_schedGroupsData.length) {
+      schedGroupPickerHint.textContent = 'No groups available';
+      return;
+    }
+    for (const g of _schedGroupsData) {
+      const lbl = document.createElement('label');
+      lbl.className = 'vmsg-contact-chip';
+      lbl.innerHTML = `<input type="checkbox" class="sched-group-cb" data-group="${_esc(g.name)}" />${_esc(g.name)} <span style="color:var(--text-muted);font-size:0.78rem">(${g.members.length})</span>`;
+      schedGroupPicker.appendChild(lbl);
+    }
+    schedGroupPickerHint.textContent = `0 of ${_schedGroupsData.length} group${_schedGroupsData.length !== 1 ? 's' : ''} selected`;
+    schedGroupPicker.addEventListener('change', _schedOnGroupChange);
   } catch (_) {}
 }
 
-schedGroup.addEventListener('change', () => {
-  const group = _schedGroupsData.find((g) => g.name === schedGroup.value);
-  _schedMembers = group ? group.members : [];
+function _schedOnGroupChange() {
+  const checkedNames = Array.from(schedGroupPicker.querySelectorAll('.sched-group-cb:checked')).map((cb) => cb.dataset.group);
+  const total = schedGroupPicker.querySelectorAll('.sched-group-cb').length;
+  schedGroupPickerHint.textContent = `${checkedNames.length} of ${total} group${total !== 1 ? 's' : ''} selected`;
+
+  if (!checkedNames.length) {
+    _schedMembers = [];
+    _schedRenderMembers();
+    _updateNameChipHint('');
+    return;
+  }
+
+  const seen = new Set();
+  const merged = [];
+  for (const name of checkedNames) {
+    const group = _schedGroupsData.find((g) => g.name === name);
+    if (!group) continue;
+    for (const m of group.members) {
+      if (!seen.has(m.phone)) { seen.add(m.phone); merged.push(m); }
+    }
+  }
+  _schedMembers = merged;
   _schedRenderMembers();
-  _updateNameChipHint(group?.members?.[0]?.name || '');
-});
+  _updateNameChipHint(merged[0]?.name || '');
+}
 
 function _schedRenderMembers() {
   if (!_schedMembers.length) {
@@ -735,11 +761,11 @@ schedFormToggle.addEventListener('click', () => {
 
 // Save
 schedSaveBtn.addEventListener('click', async () => {
-  const groupName = schedGroup.value.trim();
-  const text      = schedText.value.trim();
-  const type      = document.querySelector('input[name="schedType"]:checked')?.value;
+  const groupNames = Array.from(schedGroupPicker.querySelectorAll('.sched-group-cb:checked')).map((cb) => cb.dataset.group);
+  const text       = schedText.value.trim();
+  const type       = document.querySelector('input[name="schedType"]:checked')?.value;
 
-  if (!groupName) return _showSchedResult('error', 'Please select a group.');
+  if (!groupNames.length) return _showSchedResult('error', 'Please select at least one group.');
   if (!text && !_schedFileData) return _showSchedResult('error', 'Please enter a message or attach a file.');
 
   const days = Array.from(document.querySelectorAll('input[name="schedDay"]:checked')).map((cb) => +cb.value);
@@ -756,7 +782,7 @@ schedSaveBtn.addEventListener('click', async () => {
   const memberPhones   = selectedPhones.length && selectedPhones.length < allPhones.length ? selectedPhones : null;
 
   const body = {
-    groupName,
+    groupNames,
     label:        schedLabel.value.trim(),
     text,
     media:        _schedFileData,
@@ -791,10 +817,10 @@ schedClearBtn.addEventListener('click', _schedClearForm);
 // Send Now
 const schedSendNowBtn = document.getElementById('schedSendNowBtn');
 schedSendNowBtn.addEventListener('click', async () => {
-  const groupName = schedGroup.value.trim();
-  const text      = schedText.value.trim();
+  const groupNames = Array.from(schedGroupPicker.querySelectorAll('.sched-group-cb:checked')).map((cb) => cb.dataset.group);
+  const text       = schedText.value.trim();
 
-  if (!groupName) return _showSchedResult('error', 'Please select a group.');
+  if (!groupNames.length) return _showSchedResult('error', 'Please select at least one group.');
   if (!text && !_schedFileData) return _showSchedResult('error', 'Please enter a message or attach a file.');
 
   schedSendNowBtn.disabled    = true;
@@ -806,7 +832,7 @@ schedSendNowBtn.addEventListener('click', async () => {
     const allPhones      = Array.from(schedMembersList.querySelectorAll('input[type="checkbox"]')).map((cb) => cb.dataset.phone);
     const memberPhones   = selectedPhones.length && selectedPhones.length < allPhones.length ? selectedPhones : null;
 
-    const body = { groupName, text };
+    const body = { groupNames, text };
     if (_schedFileData) body.media = _schedFileData;
     if (memberPhones)   body.memberPhones = memberPhones;
 
@@ -823,7 +849,8 @@ schedSendNowBtn.addEventListener('click', async () => {
       .map((r) => `<li>${_esc(r.name || r.phone)}: ${_esc(r.error)}</li>`)
       .join('');
 
-    const html = `✅ Sent to <strong>${data.sent}</strong> of <strong>${data.total}</strong> members in <strong>${_esc(groupName)}</strong>`
+    const groupLabel = groupNames.length === 1 ? groupNames[0] : `${groupNames.length} groups`;
+    const html = `✅ Sent to <strong>${data.sent}</strong> of <strong>${data.total}</strong> members in <strong>${_esc(groupLabel)}</strong>`
       + (failRows ? `<br/><small style="color:var(--danger)">Failed:<ul style="margin:4px 0 0 16px">${failRows}</ul></small>` : '');
 
     _showSchedResult(data.failed === 0 ? 'ok' : 'error', html);
@@ -836,7 +863,11 @@ schedSendNowBtn.addEventListener('click', async () => {
 });
 
 function _schedClearForm() {
-  schedLabel.value = ''; schedGroup.value = ''; schedText.value = '';
+  schedLabel.value = '';
+  schedGroupPicker.querySelectorAll('.sched-group-cb').forEach((cb) => { cb.checked = false; });
+  const total = schedGroupPicker.querySelectorAll('.sched-group-cb').length;
+  if (schedGroupPickerHint) schedGroupPickerHint.textContent = `0 of ${total} group${total !== 1 ? 's' : ''} selected`;
+  schedText.value = '';
   schedTime.value  = '09:00';
   document.querySelector('input[name="schedType"][value="daily"]').checked = true;
   document.getElementById('schedOnceDateGroup').style.display = 'none';
@@ -876,7 +907,10 @@ function _buildSchedCard(s) {
   card.className = `sched-card${s.active ? '' : ' paused'}`;
   card.dataset.id = s.id;
 
-  const title    = s.label || `${s.groupName}`;
+  const groupDisplayName = s.groupNames?.length
+    ? (s.groupNames.length === 1 ? s.groupNames[0] : `${s.groupNames.join(', ')}`)
+    : (s.groupName || '');
+  const title    = s.label || groupDisplayName;
   const typeLabel = { once: 'Once', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' }[s.scheduleType] || s.scheduleType;
   const dayNames  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   let whenStr = `${typeLabel} at ${s.time}`;
@@ -896,7 +930,7 @@ function _buildSchedCard(s) {
 
   card.innerHTML = `
     <div class="sched-card-body">
-      <div class="sched-card-title">${title} <span style="font-weight:400;color:var(--text-muted);font-size:0.82rem">— ${s.groupName}</span></div>
+      <div class="sched-card-title">${_esc(title)} <span style="font-weight:400;color:var(--text-muted);font-size:0.82rem">— ${_esc(groupDisplayName)}</span></div>
       <div class="sched-card-meta">
         <span>🕐 ${whenStr}</span>
         <span>${nextRunStr}</span>
