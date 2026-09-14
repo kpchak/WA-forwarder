@@ -48,6 +48,15 @@
           <span class="qr-countdown" id="qrCountdown" style="display:none;">
             ⏱ Refreshing in <strong id="qrSeconds">20</strong>s
           </span>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+            <button class="btn btn-primary" id="qrRetryBtn">↻ Retry Connection</button>
+            <button class="btn btn-danger" id="qrClearBtn">🗑️ Clear Session &amp; New QR</button>
+          </div>
+          <p class="qr-sub" style="max-width:360px; text-align:center;">
+            Getting “Couldn’t link device”? Retry first. If it keeps failing, clear the
+            session for a completely fresh one — that sometimes links when a stale
+            session will not.
+          </p>
         </div>
 
         <!-- Connected -->
@@ -408,6 +417,6 @@
 </div><!-- /.app -->
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

@@ -326,6 +326,8 @@ const qrCountdown    = document.getElementById('qrCountdown');
 const qrSeconds      = document.getElementById('qrSeconds');
 const clearBtn       = document.getElementById('clearSessionBtn');
 const reconnectBtn   = document.getElementById('reconnectBtn');
+const qrRetryBtn     = document.getElementById('qrRetryBtn');
+const qrClearBtn     = document.getElementById('qrClearBtn');
 
 // Tab buttons and panels
 const tabBtns   = document.querySelectorAll('.tab-btn');
@@ -466,6 +468,23 @@ clearBtn.addEventListener('click', () => {
 
 reconnectBtn.addEventListener('click', () => {
   sendSessionCommand('session:reconnect');
+});
+
+// QR screen: linking can fail repeatedly (e.g. WhatsApp refusing a data-centre
+// IP). Retry restarts the client and issues a fresh QR without touching the
+// saved session; Clear wipes it so the next attempt starts from nothing.
+qrRetryBtn.addEventListener('click', () => {
+  qrRetryBtn.disabled = true;
+  setTimeout(() => { qrRetryBtn.disabled = false; }, 5000);
+  sendSessionCommand('session:reconnect');
+});
+
+qrClearBtn.addEventListener('click', () => {
+  if (confirm('Delete the saved session and start a completely new one? You will need to scan the new QR code.')) {
+    qrClearBtn.disabled = true;
+    setTimeout(() => { qrClearBtn.disabled = false; }, 5000);
+    sendSessionCommand('session:clear');
+  }
 });
 
 // ── Groups ────────────────────────────────────────────────────────────────────
