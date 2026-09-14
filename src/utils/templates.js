@@ -4,8 +4,37 @@ const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Sat
 const MONTHS = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December'];
 
+const DEFAULT_TIMEZONE = process.env.SCHEDULE_TIMEZONE || 'Asia/Kolkata';
+
+/**
+ * Read the wall-clock date/weekday for `date` in `timeZone`, regardless of
+ * the server process's own timezone (this server runs in UTC, so a schedule
+ * firing at e.g. 00:30 IST is still the previous UTC day — using the raw
+ * Date getters here previously caused <day> to resolve to the wrong date
+ * for early-morning IST schedules).
+ */
+function _localParts(date, timeZone) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'long',
+  });
+  const parts = {};
+  for (const p of dtf.formatToParts(date)) parts[p.type] = p.value;
+  return {
+    day:     parseInt(parts.day, 10),
+    month:   parseInt(parts.month, 10) - 1, // 0-indexed to match MONTHS
+    year:    parseInt(parts.year, 10),
+    weekday: parts.weekday,
+  };
+}
+
 /**
  * Replace template variables in text using the given date (defaults to now).
+ * Date components are resolved in `timeZone` (defaults to the schedule
+ * timezone), not the server's local/process timezone.
  *
  * Supported variables:
  *   <weekday>      → Monday, Tuesday, …
@@ -15,17 +44,19 @@ const MONTHS = ['January','February','March','April','May','June',
  *   <month>        → January, February, …
  *   <year>         → 2026
  */
-function resolveTemplates(text, now = new Date(), name = '') {
+function resolveTemplates(text, now = new Date(), name = '', timeZone = DEFAULT_TIMEZONE) {
   if (!text) return text;
+
+  const { day, month, year, weekday } = _localParts(now, timeZone);
 
   return text
     .replace(/<day>([+-]\d+)?/g, (_, offset) => {
       const n = offset ? parseInt(offset, 10) : 0;
-      return String(now.getDate() + n);
+      return String(day + n);
     })
-    .replace(/<weekday>/g, DAYS[now.getDay()])
-    .replace(/<month>/g, MONTHS[now.getMonth()])
-    .replace(/<year>/g, String(now.getFullYear()))
+    .replace(/<weekday>/g, weekday)
+    .replace(/<month>/g, MONTHS[month])
+    .replace(/<year>/g, String(year))
     .replace(/<name>/g, name || '');
 }
 
