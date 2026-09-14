@@ -64,6 +64,8 @@ function getClient() { return _client; }
 
 /** Start (or restart) the WhatsApp client. Safe to call multiple times. */
 async function start() {
+  _installAuthLockGuard();
+
   if (_startLock) {
     console.log('[WA] start() called while already starting — waiting');
     return _startLock;
@@ -83,10 +85,7 @@ async function clearSession() {
     _client = null;
   }
 
-  if (fs.existsSync(AUTH_PATH)) {
-    fs.rmSync(AUTH_PATH, { recursive: true, force: true });
-    console.log('[WA] Auth files deleted');
-  }
+  _removeAuthFiles();
 
   _setState('stopped', null);
   _reconnectAttempts = 0;
@@ -110,6 +109,67 @@ async function reconnect() {
   _reconnectAttempts = 0;
   _setState('stopped', null);   // clears 'ready' so _doStart() won't skip
   return start();
+}
+
+// ── Windows logout-crash guard ────────────────────────────────────────────────
+/**
+ * When WhatsApp ends a session it emits LOGOUT, and whatsapp-web.js responds by
+ * deleting the session directory from inside its own async handler. On Windows
+ * Chrome can still hold files in there (CrashpadMetrics-active.pma in
+ * particular), so that unlink throws EBUSY/EPERM — an unhandled rejection the
+ * library never catches, which takes the whole process down. Linux does not hit
+ * this because an open file can be unlinked.
+ *
+ * Recognise exactly that failure and recover from it; anything else is rethrown
+ * so genuine bugs still crash loudly.
+ */
+function _isAuthFileLockError(err) {
+  const msg = String((err && err.message) || err || '');
+  return (msg.includes('EBUSY') || msg.includes('EPERM')) && msg.includes('.wwebjs_auth');
+}
+
+/** Delete the session directory, tolerating Windows file locks. */
+function _removeAuthFiles() {
+  if (!fs.existsSync(AUTH_PATH)) return true;
+  try {
+    // maxRetries/retryDelay make Node itself retry EBUSY/EPERM on Windows.
+    fs.rmSync(AUTH_PATH, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    console.log('[WA] Auth files deleted');
+    return true;
+  } catch (err) {
+    console.warn(`[WA] Could not delete auth files: ${err.message}`);
+    return false;
+  }
+}
+
+let _lockGuardInstalled = false;
+function _installAuthLockGuard() {
+  if (_lockGuardInstalled) return;
+  _lockGuardInstalled = true;
+
+  process.on('unhandledRejection', (err) => {
+    if (!_isAuthFileLockError(err)) throw err;   // preserve default crash behaviour
+    console.warn('[WA] Session files were locked during logout cleanup — recovering instead of exiting');
+    _recoverFromLockedLogout();
+  });
+}
+
+/** Finish the cleanup the library could not, then start a fresh client. */
+async function _recoverFromLockedLogout() {
+  _cancelReconnect();
+
+  if (_client) {
+    try { await _withTimeout(_client.destroy(), 8000); } catch (_) {}
+    _client = null;
+  }
+
+  // Chrome exits a moment after destroy(); give it that before retrying.
+  setTimeout(() => {
+    _removeAuthFiles();
+    _setState('stopped', null);
+    _reconnectAttempts = 0;
+    setTimeout(() => start(), 1000);
+  }, 2000);
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
