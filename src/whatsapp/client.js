@@ -54,6 +54,25 @@ async function clearSession() {
   setTimeout(() => start(), 1000);
 }
 
+/**
+ * Re-initialize the client WITHOUT logging out or deleting session files.
+ * This is what the "Reconnect" button calls — it must never cost the user
+ * their pairing. Use clearSession() when the session really should be wiped.
+ */
+async function reconnect() {
+  console.log('[WA] Reconnecting (session preserved)');
+  _cancelReconnect();
+
+  if (_client) {
+    try { await _withTimeout(_client.destroy(), 8000); } catch (_) {}
+    _client = null;
+  }
+
+  _reconnectAttempts = 0;
+  _setState('stopped', null);   // clears 'ready' so _doStart() won't skip
+  return start();
+}
+
 // ── Internal ──────────────────────────────────────────────────────────────────
 async function _doStart() {
   if (_state === 'ready') {
@@ -288,4 +307,4 @@ async function _resolveGroupName(waGroupId) {
   return _groupNameCache.get(waGroupId) || null;
 }
 
-module.exports = { setIO, start, clearSession, getState, getQR, getClient };
+module.exports = { setIO, start, reconnect, clearSession, getState, getQR, getClient };

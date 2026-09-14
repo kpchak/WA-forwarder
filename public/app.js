@@ -446,14 +446,26 @@ tabBtns.forEach((btn) => {
 });
 
 // ── Buttons ───────────────────────────────────────────────────────────────────
+// Session commands are deliberately NOT queued while the socket is down.
+// socket.io buffers normal emits and replays them on reconnect, so a click
+// made against a dead server would fire the moment it came back up — that is
+// how an open tab silently wiped a live session. volatile.emit drops instead.
+function sendSessionCommand(event) {
+  if (!socket.connected) {
+    alert('Not connected to the server. Wait for the page to reconnect, then try again.');
+    return;
+  }
+  socket.volatile.emit(event);
+}
+
 clearBtn.addEventListener('click', () => {
   if (confirm('This will log out WhatsApp and delete the saved session. You will need to scan a new QR code. Continue?')) {
-    socket.emit('session:clear');
+    sendSessionCommand('session:clear');
   }
 });
 
 reconnectBtn.addEventListener('click', () => {
-  socket.emit('session:clear');
+  sendSessionCommand('session:reconnect');
 });
 
 // ── Groups ────────────────────────────────────────────────────────────────────

@@ -57,6 +57,10 @@ io.on('connection', (socket) => {
   // Send current WhatsApp state synchronously on connect
   socket.emit('wa:status', { state: wa.getState(), qr: wa.getQR() });
 
+  socket.on('session:reconnect', () => {
+    wa.reconnect().catch((err) => console.error('[IO] reconnect error:', err.message));
+  });
+
   socket.on('session:clear', () => {
     wa.clearSession().catch((err) => console.error('[IO] clearSession error:', err.message));
   });
