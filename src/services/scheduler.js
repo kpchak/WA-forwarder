@@ -63,10 +63,16 @@ function update(id, data) {
   const s = _find(id);
   _stopJob(id);
 
-  if (data.groupName)    s.groupName    = data.groupName;
+  if (data.groupNames !== undefined) {
+    s.groupNames = Array.isArray(data.groupNames) ? data.groupNames : [];
+    s.groupName  = s.groupNames[0] || '';
+  } else if (data.groupName)    s.groupName    = data.groupName;
   if (data.label  !== undefined) s.label = data.label;
   if (data.text   !== undefined) s.text  = data.text;
   if (data.media  !== undefined) s.media = data.media;
+  if (data.memberPhones !== undefined) {
+    s.memberPhones = Array.isArray(data.memberPhones) && data.memberPhones.length ? data.memberPhones : null;
+  }
   if (data.scheduleType)       s.scheduleType = data.scheduleType;
   if (data.time)               s.time         = data.time;
   if (data.date !== undefined) s.date         = data.date;
@@ -93,6 +99,16 @@ function remove(id) {
   _save();
 }
 
+/**
+ * Send a saved schedule's message immediately, without touching its cron
+ * job, active flag, lastRun, or (for "once" schedules) consuming its run.
+ * Used by the "Send Now" button on a saved schedule card.
+ */
+async function runNow(id) {
+  const schedule = _find(id);
+  return _send(schedule);
+}
+
 // ── Job execution ─────────────────────────────────────────────────────────────
 async function _execute(id) {
   const schedule = _schedules.find((s) => s.id === id);
@@ -104,81 +120,92 @@ async function _execute(id) {
   const label = schedule.label || `${groupLabel} (${schedule.scheduleType})`;
   console.log(`[Scheduler] ▶ Firing: ${label}`);
 
+  const result = await _send(schedule, label);
+  if (!result) return;
+
+  schedule.lastRun = new Date().toISOString();
+  if (schedule.scheduleType === 'once') {
+    schedule.active = false;
+    _stopJob(id);
+  }
+  _save();
+}
+
+/**
+ * Core send logic shared by the cron-triggered _execute() and the manual
+ * runNow(). Resolves recipients, sends text/media, and returns
+ * { sent, failed } — or null if WhatsApp isn't ready / nothing to send.
+ * Never mutates schedule state (active/lastRun/cronExpr).
+ */
+async function _send(schedule, label) {
+  label = label || schedule.label || schedule.groupName || schedule.id;
+
   const wa = require('../whatsapp/client');
   if (wa.getState() !== 'ready') {
     console.warn(`[Scheduler] WhatsApp not ready — skipped: ${label}`);
-    return;
+    throw new Error('WhatsApp not connected');
   }
 
-  try {
-    const sheets = require('./sheets');
-    const groups = await sheets.fetchGroups(false);
+  const sheets = require('./sheets');
+  const groups = await sheets.fetchGroups(false);
 
-    // Support groupNames array (new) or single groupName (legacy)
-    const names = schedule.groupNames?.length ? schedule.groupNames : [schedule.groupName];
+  // Support groupNames array (new) or single groupName (legacy)
+  const names = schedule.groupNames?.length ? schedule.groupNames : [schedule.groupName];
 
-    // Merge and dedupe members from all target groups
-    const seen = new Set();
-    let allMembers = [];
-    for (const name of names) {
-      const group = groups.find((g) => g.name === name);
-      if (!group) { console.error(`[Scheduler] Group "${name}" not found — skipping`); continue; }
-      for (const m of group.members) {
-        if (!seen.has(m.phone)) { seen.add(m.phone); allMembers.push(m); }
-      }
+  // Merge and dedupe members from all target groups
+  const seen = new Set();
+  let allMembers = [];
+  for (const name of names) {
+    const group = groups.find((g) => g.name === name);
+    if (!group) { console.error(`[Scheduler] Group "${name}" not found — skipping`); continue; }
+    for (const m of group.members) {
+      if (!seen.has(m.phone)) { seen.add(m.phone); allMembers.push(m); }
     }
-
-    if (!allMembers.length) {
-      console.error(`[Scheduler] No members found in groups [${names.join(', ')}] — skipped`);
-      return;
-    }
-
-    const members = schedule.memberPhones
-      ? allMembers.filter((m) => schedule.memberPhones.includes(m.phone))
-      : allMembers;
-
-    if (!members.length) {
-      console.warn(`[Scheduler] No matching recipients for schedule "${label}" — skipped`);
-      return;
-    }
-
-    const client = wa.getClient();
-    const now    = new Date();
-    let sent = 0, failed = 0;
-
-    for (const member of members) {
-      const waId = _toWAId(member.phone);
-      if (!waId) { failed++; continue; }
-      const resolvedText = resolveTemplates(schedule.text, now, member.name || '');
-      try {
-        if (schedule.media) {
-          const media = new MessageMedia(
-            schedule.media.mimetype,
-            schedule.media.base64,
-            schedule.media.filename || 'attachment'
-          );
-          await client.sendMessage(waId, media, { caption: resolvedText || '' });
-        } else {
-          await client.sendMessage(waId, resolvedText);
-        }
-        sent++;
-      } catch (err) {
-        console.warn(`[Scheduler] Failed to send to ${member.phone}:`, err.message);
-        failed++;
-      }
-      await new Promise((r) => setTimeout(r, 500)); // rate limit
-    }
-
-    schedule.lastRun = new Date().toISOString();
-    if (schedule.scheduleType === 'once') {
-      schedule.active = false;
-      _stopJob(id);
-    }
-    _save();
-    console.log(`[Scheduler] ✅ ${label}: sent ${sent}, failed ${failed}`);
-  } catch (err) {
-    console.error(`[Scheduler] ❌ Error: ${label} —`, err.message);
   }
+
+  if (!allMembers.length) {
+    console.error(`[Scheduler] No members found in groups [${names.join(', ')}] — skipped`);
+    throw new Error('No members found in target group(s)');
+  }
+
+  const members = schedule.memberPhones
+    ? allMembers.filter((m) => schedule.memberPhones.includes(m.phone))
+    : allMembers;
+
+  if (!members.length) {
+    console.warn(`[Scheduler] No matching recipients for schedule "${label}" — skipped`);
+    throw new Error('No matching recipients');
+  }
+
+  const client = wa.getClient();
+  const now    = new Date();
+  let sent = 0, failed = 0;
+
+  for (const member of members) {
+    const waId = _toWAId(member.phone);
+    if (!waId) { failed++; continue; }
+    const resolvedText = resolveTemplates(schedule.text, now, member.name || '');
+    try {
+      if (schedule.media) {
+        const media = new MessageMedia(
+          schedule.media.mimetype,
+          schedule.media.base64,
+          schedule.media.filename || 'attachment'
+        );
+        await client.sendMessage(waId, media, { caption: resolvedText || '' });
+      } else {
+        await client.sendMessage(waId, resolvedText);
+      }
+      sent++;
+    } catch (err) {
+      console.warn(`[Scheduler] Failed to send to ${member.phone}:`, err.message);
+      failed++;
+    }
+    await new Promise((r) => setTimeout(r, 500)); // rate limit
+  }
+
+  console.log(`[Scheduler] ✅ ${label}: sent ${sent}, failed ${failed}`);
+  return { sent, failed, total: members.length };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -310,4 +337,4 @@ function _save() {
   }
 }
 
-module.exports = { init, getAll, create, update, toggle, remove };
+module.exports = { init, getAll, create, update, toggle, remove, runNow };

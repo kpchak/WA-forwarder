@@ -4,8 +4,47 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 const AUTH_PATH = path.join(__dirname, '../../.wwebjs_auth');
+
+/**
+ * Remove stale Chrome Singleton* lock files left behind by an unclean crash.
+ * whatsapp-web.js/Puppeteer refuses to launch a new browser if these exist,
+ * even when no Chrome process is actually running (e.g. after a PM2/OOM kill
+ * or the "Navigating frame was detached" crash). Only removes them when no
+ * Chrome process currently has the session directory open, so a genuinely
+ * running browser is never disturbed.
+ */
+function _cleanStaleSingletonLocks() {
+  const sessionDir = path.join(AUTH_PATH, 'session');
+  if (!fs.existsSync(sessionDir)) return;
+
+  let chromeRunning = false;
+  try {
+    execSync(`pgrep -f "${sessionDir}"`, { stdio: 'ignore' });
+    chromeRunning = true; // pgrep exit 0 = a matching process was found
+  } catch (_) {
+    chromeRunning = false; // pgrep exit 1 = no match
+  }
+
+  if (chromeRunning) {
+    console.log('[WA] Chrome process still using session dir — skipping lock cleanup');
+    return;
+  }
+
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    const p = path.join(sessionDir, name);
+    try {
+      fs.unlinkSync(p);
+      console.log(`[WA] Removed stale lock file: ${name}`);
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        console.warn(`[WA] Could not remove lock file ${name}: ${err.message}`);
+      }
+    }
+  }
+}
 
 // ── State ────────────────────────────────────────────────────────────────────
 let _io = null;
@@ -75,6 +114,8 @@ async function reconnect() {
 
 // ── Internal ──────────────────────────────────────────────────────────────────
 async function _doStart() {
+  _cleanStaleSingletonLocks();
+
   if (_state === 'ready') {
     console.log('[WA] Already ready, skipping start');
     return;

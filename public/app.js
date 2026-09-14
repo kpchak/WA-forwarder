@@ -617,6 +617,7 @@ let _schedFileData   = null;
 let _schedTabReady   = false;
 let _schedGroupsData = [];
 let _schedMembers    = [];  // current group's members for recipient selection
+let _schedEditingId  = null; // schedule id currently being edited, or null when composing new
 
 const schedMembersSection = document.getElementById('schedMembersSection');
 const schedMembersList    = document.getElementById('schedMembersList');
@@ -806,21 +807,26 @@ schedSaveBtn.addEventListener('click', async () => {
     memberPhones,
   };
 
+  const isEditing = !!_schedEditingId;
   schedSaveBtn.disabled    = true;
-  schedSaveBtn.textContent = '⏳ Saving…';
+  schedSaveBtn.textContent = isEditing ? '⏳ Updating…' : '⏳ Saving…';
 
   try {
-    const res  = await fetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const url    = isEditing ? `/api/schedules/${_schedEditingId}` : '/api/schedules';
+    const method = isEditing ? 'PUT' : 'POST';
+    const res  = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
-    _showSchedResult('ok', `✅ Schedule saved — next run: ${_fmtNextRun(data.schedule.nextRun)}`);
+    _showSchedResult('ok', isEditing
+      ? `✅ Schedule updated — next run: ${_fmtNextRun(data.schedule.nextRun)}`
+      : `✅ Schedule saved — next run: ${_fmtNextRun(data.schedule.nextRun)}`);
     _schedClearForm();
     await loadSchedules();
   } catch (err) {
     _showSchedResult('error', `❌ ${err.message}`);
   } finally {
     schedSaveBtn.disabled    = false;
-    schedSaveBtn.textContent = '💾 Save Schedule';
+    schedSaveBtn.textContent = _schedEditingId ? '💾 Update Schedule' : '💾 Save Schedule';
   }
 });
 
@@ -875,6 +881,8 @@ schedSendNowBtn.addEventListener('click', async () => {
 });
 
 function _schedClearForm() {
+  _schedEditingId = null;
+  schedSaveBtn.textContent = '💾 Save Schedule';
   schedLabel.value = '';
   schedGroupPicker.querySelectorAll('.sched-group-cb').forEach((cb) => { cb.checked = false; });
   const total = schedGroupPicker.querySelectorAll('.sched-group-cb').length;
@@ -891,6 +899,64 @@ function _schedClearForm() {
   schedMembersSection.style.display = 'none';
   schedMembersList.innerHTML = '';
   schedMembersHint.textContent = '';
+}
+
+// Populate the compose form with an existing schedule's data for editing.
+async function _schedPopulateFormForEdit(s) {
+  _schedClearForm();
+  _schedEditingId = s.id;
+
+  schedFormBody.style.display = 'block';
+  schedFormToggle.textContent = '▲ Collapse';
+
+  schedLabel.value = s.label || '';
+  schedText.value  = s.text  || '';
+
+  const groupNames = s.groupNames?.length ? s.groupNames : (s.groupName ? [s.groupName] : []);
+  schedGroupPicker.querySelectorAll('.sched-group-cb').forEach((cb) => {
+    cb.checked = groupNames.includes(cb.dataset.group);
+  });
+  _schedOnGroupChange();
+
+  // Restore recipient selection (if a subset was saved)
+  if (s.memberPhones?.length) {
+    schedMembersList.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      cb.checked = s.memberPhones.includes(cb.dataset.phone);
+    });
+    _schedUpdateMembersHint();
+  }
+
+  // Restore attachment
+  if (s.media) {
+    _schedFileData = s.media;
+    schedFileLabel.textContent = '📎 ' + (s.media.filename || 'attachment');
+    schedFileName.textContent  = s.media.filename || 'attachment';
+    schedFileSize.textContent  = '';
+    if ((s.media.mimetype || '').startsWith('image/')) {
+      schedFileImg.src = `data:${s.media.mimetype};base64,${s.media.base64}`;
+      schedFileImg.style.display = 'block';
+    } else {
+      schedFileImg.style.display = 'none';
+    }
+    schedFilePreview.style.display = 'flex';
+  }
+
+  // Schedule type / time / days / date
+  document.querySelector(`input[name="schedType"][value="${s.scheduleType}"]`).checked = true;
+  schedTime.value = s.time || '09:00';
+  document.getElementById('schedOnceDateGroup').style.display = s.scheduleType === 'once'    ? 'flex' : 'none';
+  schedDaysGroup.style.display                                = s.scheduleType === 'weekly'  ? 'flex' : 'none';
+  schedDomGroup.style.display                                 = s.scheduleType === 'monthly' ? 'flex' : 'none';
+  if (s.scheduleType === 'once')    document.getElementById('schedOnceDate').value = s.date || '';
+  if (s.scheduleType === 'weekly') {
+    document.querySelectorAll('input[name="schedDay"]').forEach((cb) => {
+      cb.checked = (s.days || []).includes(+cb.value);
+    });
+  }
+  if (s.scheduleType === 'monthly') document.getElementById('schedDom').value = s.dayOfMonth || 1;
+
+  schedSaveBtn.textContent = '💾 Update Schedule';
+  schedFormBody.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // Load / render schedule list
@@ -952,11 +1018,44 @@ function _buildSchedCard(s) {
       ${preview ? `<div class="sched-card-preview">"${_esc(preview)}"</div>` : ''}
     </div>
     <div class="sched-card-actions">
+      <button class="btn-toggle" data-action="sendnow">📤 Send Now</button>
+      <button class="btn-toggle" data-action="edit">✏️ Edit</button>
       <button class="btn-toggle ${s.active ? 'active' : ''}" data-action="toggle">
         ${s.active ? '⏸ Pause' : '▶ Resume'}
       </button>
       <button class="btn-del" data-action="delete">🗑 Delete</button>
-    </div>`;
+    </div>
+    <div class="sched-card-sendresult" style="display:none;font-size:0.78rem;margin-top:4px"></div>`;
+
+  const sendResultEl = card.querySelector('.sched-card-sendresult');
+
+  card.querySelector('[data-action="sendnow"]').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    if (!confirm(`Send "${title}" now to its saved recipients? This will not change the schedule.`)) return;
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏳ Sending…';
+    sendResultEl.style.display = 'none';
+    try {
+      const res  = await fetch(`/api/schedules/${s.id}/send-now`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      sendResultEl.style.color = data.failed ? 'var(--danger)' : 'var(--green-dark)';
+      sendResultEl.textContent = `Sent ${data.sent}/${data.total}${data.failed ? `, ${data.failed} failed` : ''}`;
+      sendResultEl.style.display = 'block';
+    } catch (err) {
+      sendResultEl.style.color = 'var(--danger)';
+      sendResultEl.textContent = `❌ ${err.message}`;
+      sendResultEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  });
+
+  card.querySelector('[data-action="edit"]').addEventListener('click', () => {
+    _schedPopulateFormForEdit(s);
+  });
 
   card.querySelector('[data-action="toggle"]').addEventListener('click', async () => {
     try {

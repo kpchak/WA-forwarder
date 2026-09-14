@@ -50,4 +50,16 @@ router.post('/:id/toggle', (req, res) => {
   }
 });
 
+// POST /api/schedules/:id/send-now — send the saved schedule's message
+// immediately, without affecting its cron job, active state, or lastRun.
+router.post('/:id/send-now', async (req, res) => {
+  try {
+    const result = await scheduler.runNow(req.params.id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const status = err.message.includes('not found') ? 404 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
 module.exports = router;
