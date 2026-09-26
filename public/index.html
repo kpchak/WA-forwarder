@@ -64,7 +64,15 @@
           <span class="connected-icon">✅</span>
           <p class="connected-label">WhatsApp Connected</p>
           <p class="connected-sub">You can now use Groups, Send, Schedule and Attendance.</p>
-          <button class="btn btn-danger" id="clearSessionBtn">🔓 Log Out &amp; Clear Session</button>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+            <button class="btn btn-primary" id="restartConnBtn">↻ Restart Connection</button>
+            <button class="btn btn-danger" id="clearSessionBtn">🔓 Log Out &amp; Clear Session</button>
+          </div>
+          <p class="qr-sub" style="max-width:380px; text-align:center;">
+            Chats or messages not loading? Restart first — it reconnects WhatsApp and
+            keeps you logged in. Only log out if you actually need to link a different
+            phone: re-linking needs a new QR scan, which can be hard to complete.
+          </p>
         </div>
 
         <!-- Disconnected -->
@@ -417,6 +425,6 @@
 </div><!-- /.app -->
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

@@ -328,6 +328,7 @@ const clearBtn       = document.getElementById('clearSessionBtn');
 const reconnectBtn   = document.getElementById('reconnectBtn');
 const qrRetryBtn     = document.getElementById('qrRetryBtn');
 const qrClearBtn     = document.getElementById('qrClearBtn');
+const restartConnBtn = document.getElementById('restartConnBtn');
 
 // Tab buttons and panels
 const tabBtns   = document.querySelectorAll('.tab-btn');
@@ -476,6 +477,15 @@ reconnectBtn.addEventListener('click', () => {
 qrRetryBtn.addEventListener('click', () => {
   qrRetryBtn.disabled = true;
   setTimeout(() => { qrRetryBtn.disabled = false; }, 5000);
+  sendSessionCommand('session:reconnect');
+});
+
+// Connected screen: the only control here used to be the destructive logout, so
+// "chats stopped loading" had no safe remedy short of restarting the process over
+// SSH. Restart reconnects the client and keeps the pairing.
+restartConnBtn.addEventListener('click', () => {
+  restartConnBtn.disabled = true;
+  setTimeout(() => { restartConnBtn.disabled = false; }, 5000);
   sendSessionCommand('session:reconnect');
 });
 
