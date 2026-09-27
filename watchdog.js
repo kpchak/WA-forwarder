@@ -20,7 +20,7 @@ const { exec } = require('child_process');
 const CHECK_INTERVAL_MS  = 30_000;   // poll every 30s
 const COOLDOWN_MS        = 120_000;  // never restart more than once per 2 min
 const CONSECUTIVE_NEEDED = 2;        // require 2 bad checks in a row before acting
-const HEALTH_PATH        = '/api/chat-messages/chats';
+const HEALTH_PATH        = '/api/chat-messages/health';
 const HEALTH_PORT        = 3001;
 
 let consecutiveBad = 0;

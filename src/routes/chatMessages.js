@@ -20,6 +20,22 @@ function _pruneCache() {
   _lastPrune = Date.now();
 }
 
+// GET /api/chat-messages/health — cheap liveness probe that still touches the
+// page, so a detached frame surfaces in the response. The watchdog used to poll
+// /chats for this, but getChats() sweeps every chat (671 here) and is heavy
+// enough to detach the frame by itself — the monitor was destabilising the
+// client it exists to protect. getState() reaches into the same page without
+// enumerating anything.
+router.get('/health', async (req, res) => {
+  try {
+    if (wa.getState() !== 'ready') return res.json({ ok: false, state: wa.getState() });
+    const waState = await wa.getClient().getState();
+    res.json({ ok: waState === 'CONNECTED', state: waState });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // GET /api/chat-messages/chats — list all WA chats sorted by recency
 router.get('/chats', async (req, res) => {
   try {
@@ -54,11 +70,23 @@ router.post('/load', async (req, res) => {
 
     _pruneCache();
 
-    // Fetch each contact's DM chat in parallel
+    const warnings = [];
+
+    // Fetch each contact's chat in parallel
     const perPhone = await Promise.all(uniquePhones.map(async (phone) => {
       const waId = _toWAId(phone);
       if (!waId) return [];
       try {
+        // Groups are skipped deliberately. Both ways of reaching a group chat
+        // detach the Puppeteer frame on this client — getChatById() on a group
+        // id, and the getChats() sweep needed to look one up — and a detached
+        // frame kills the session and empties the whole load, not just that
+        // row. Skipping keeps every other selected contact working.
+        if (waId.endsWith('@g.us')) {
+          warnings.push(`${phone} is a group — group chats can't be read on this client yet`);
+          console.warn(`[ChatMessages] Skipping group ${waId} (would detach the frame)`);
+          return [];
+        }
         const chat = await client.getChatById(waId);
         const msgs = await chat.fetchMessages({ limit: 500 });
         const out  = [];
@@ -79,13 +107,17 @@ router.post('/load', async (req, res) => {
         }
         return out;
       } catch (err) {
+        // Report rather than swallow: a failed lookup used to be indistinguishable
+        // from a contact with nothing to say, so a crashed client looked exactly
+        // like "no messages today".
+        warnings.push(`${phone}: ${err.message}`);
         console.warn(`[ChatMessages] No chat for ${phone}: ${err.message}`);
         return [];
       }
     }));
 
     const messages = perPhone.flat().sort((a, b) => a.timestamp - b.timestamp);
-    res.json({ messages });
+    res.json(warnings.length ? { messages, warnings } : { messages });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
