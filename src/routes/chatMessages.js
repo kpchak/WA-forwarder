@@ -141,6 +141,13 @@ router.get('/media/:msgId', async (req, res) => {
 router.post('/forward', async (req, res) => {
   try {
     if (wa.getState() !== 'ready') return res.status(503).json({ error: 'WhatsApp not connected' });
+
+    // Forwarding into a disconnected page reports success and delivers nothing.
+    try {
+      await wa.assertConnected();
+    } catch (err) {
+      return res.status(503).json({ error: err.message });
+    }
     const { messageIds, targetGroupName, contacts, prefix, caption } = req.body;
     console.log('[Forward] prefix=%j  caption=%j  contacts=%d', prefix, caption, contacts?.length ?? 0);
     if (!messageIds?.length) return res.status(400).json({ error: 'messageIds required' });

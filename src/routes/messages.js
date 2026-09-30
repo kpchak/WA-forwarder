@@ -22,6 +22,14 @@ router.post('/send', async (req, res) => {
     if (!text && !media)        return res.status(400).json({ error: 'Provide text, media, or both' });
     if (wa.getState() !== 'ready') return res.status(503).json({ error: 'WhatsApp is not connected' });
 
+    // 'ready' alone is not enough — the page can be OPENING, in which case every
+    // send is queued in the browser and silently never delivered.
+    try {
+      await wa.assertConnected();
+    } catch (err) {
+      return res.status(503).json({ error: err.message });
+    }
+
     const allGroups = await sheets.fetchGroups(false);
 
     // Merge members from all selected groups, deduplicated by phone

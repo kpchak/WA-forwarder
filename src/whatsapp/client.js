@@ -62,6 +62,32 @@ function getState() { return _state; }
 function getQR() { return _qr; }
 function getClient() { return _client; }
 
+/**
+ * Throw unless WhatsApp itself is connected. Our own 'ready' is not enough:
+ * the page can sit in OPENING for days while _state still says ready, and
+ * sendMessage() resolves happily in that state — the message goes into the
+ * browser's outbound queue and is never transmitted. Callers that send
+ * anything must pass this first, or they will report success for messages
+ * nobody receives.
+ */
+async function assertConnected() {
+  if (_state !== 'ready' || !_client) {
+    throw new Error(`WhatsApp not connected (client state: ${_state})`);
+  }
+  let waState;
+  try {
+    waState = await _withTimeout(_client.getState(), 8000);
+  } catch (err) {
+    throw new Error(`WhatsApp state check failed: ${err.message}`);
+  }
+  if (waState !== 'CONNECTED') {
+    throw new Error(
+      `WhatsApp is not connected (state: ${waState}) — messages would be queued locally, not delivered`
+    );
+  }
+  return true;
+}
+
 /** Start (or restart) the WhatsApp client. Safe to call multiple times. */
 async function start() {
   _installAuthLockGuard();
@@ -408,4 +434,4 @@ async function _resolveGroupName(waGroupId) {
   return _groupNameCache.get(waGroupId) || null;
 }
 
-module.exports = { setIO, start, reconnect, clearSession, getState, getQR, getClient };
+module.exports = { setIO, start, reconnect, clearSession, assertConnected, getState, getQR, getClient };

@@ -23,8 +23,11 @@ const CONSECUTIVE_NEEDED = 2;        // require 2 bad checks in a row before act
 const HEALTH_PATH        = '/api/chat-messages/health';
 const HEALTH_PORT        = 3001;
 
-let consecutiveBad = 0;
-let lastRestart     = 0;
+const DISCONNECTED_NEEDED = 4;   // ~2 min: startup legitimately looks like this
+
+let consecutiveBad          = 0;
+let consecutiveDisconnected = 0;
+let lastRestart             = 0;
 
 function checkHealth() {
   const req = http.get(
@@ -33,14 +36,30 @@ function checkHealth() {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => {
-        const crashed = body.includes('detached Frame');
-        if (crashed) {
+        // Two distinct faults, with different tolerances.
+        //   detached frame — the original crash; act quickly.
+        //   not CONNECTED  — the page sits in OPENING while the app still
+        //     reports ready, so every send is queued in the browser and never
+        //     delivered. It went unnoticed for three days once. Startup looks
+        //     identical for ~30s, hence the longer threshold.
+        const detached = body.includes('detached Frame');
+        let notConnected = false;
+        try { notConnected = JSON.parse(body).ok === false; } catch (_) { /* not JSON */ }
+
+        if (detached) {
           consecutiveBad++;
           console.log(`[Watchdog] Unhealthy check ${consecutiveBad}/${CONSECUTIVE_NEEDED} — detached frame detected`);
           if (consecutiveBad >= CONSECUTIVE_NEEDED) _maybeRestart();
+        } else if (notConnected) {
+          consecutiveDisconnected++;
+          console.log(`[Watchdog] Not connected ${consecutiveDisconnected}/${DISCONNECTED_NEEDED} — ${body.slice(0, 80)}`);
+          if (consecutiveDisconnected >= DISCONNECTED_NEEDED) _maybeRestart();
         } else {
-          if (consecutiveBad > 0) console.log('[Watchdog] Recovered — resetting counter');
+          if (consecutiveBad > 0 || consecutiveDisconnected > 0) {
+            console.log('[Watchdog] Recovered — resetting counters');
+          }
           consecutiveBad = 0;
+          consecutiveDisconnected = 0;
         }
       });
     }
@@ -57,7 +76,8 @@ function _maybeRestart() {
   }
   lastRestart = now;
   consecutiveBad = 0;
-  console.log('[Watchdog] Restarting wa-manager due to detached-frame crash');
+  consecutiveDisconnected = 0;
+  console.log('[Watchdog] Restarting wa-manager — client unhealthy');
   exec('pm2 restart wa-manager', (err) => {
     if (err) console.error('[Watchdog] pm2 restart command failed:', err.message);
     else console.log('[Watchdog] pm2 restart command issued successfully');

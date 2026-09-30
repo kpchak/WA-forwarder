@@ -177,6 +177,10 @@ async function _send(schedule, label) {
     throw new Error('No matching recipients');
   }
 
+  // A scheduled run that reports "sent 3, failed 0" into a disconnected page is
+  // worse than one that fails: nobody receives it and nobody finds out.
+  await wa.assertConnected();
+
   const client = wa.getClient();
   const now    = new Date();
   let sent = 0, failed = 0;
