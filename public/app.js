@@ -581,7 +581,7 @@ function buildGroupCard(group) {
       <span class="group-name" title="${_esc(group.name)}">👥 ${_esc(group.name)}</span>
       <div class="group-badges">
         ${group.sheetUrl ? `<a class="badge badge-sheet" href="${_esc(group.sheetUrl)}" target="_blank" rel="noopener noreferrer"
-             title="Open this group's tab in Google Sheets">📊 Sheet</a>` : ''}
+             title="Open ${_esc(group.name)} in Google Sheets" aria-label="Open ${_esc(group.name)} in Google Sheets">📊</a>` : ''}
         <span class="badge badge-count">${group.members?.length || 0} members</span>
         <span class="badge badge-chevron">▼</span>
       </div>

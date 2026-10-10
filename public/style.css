@@ -367,11 +367,11 @@ body {
 .group-card-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 16px; cursor: pointer; user-select: none;
-  gap: 10px;
+  gap: 10px; flex-wrap: wrap;   /* badges drop below rather than squeeze the name out */
 }
 .group-card-header:hover { background: var(--bg); }
 
-.group-name { font-weight: 600; font-size: 0.95rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-name { font-weight: 600; font-size: 0.95rem; flex: 1 1 auto; min-width: 6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .group-badges { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
@@ -381,8 +381,9 @@ body {
   border-radius: 999px; white-space: nowrap;
 }
 .badge-count   { background: #e8f5e9; color: #2e7d32; }
-.badge-sheet   { background: #e3f2fd; color: #1565c0; text-decoration: none; cursor: pointer; }
+.badge-sheet   { background: #e3f2fd; color: #1565c0; text-decoration: none; cursor: pointer; padding: 3px 7px; font-size: 0.8rem; line-height: 1; }
 .badge-sheet:hover { background: #bbdefb; }
+.badge-sheet:visited { color: #1565c0; }
 .badge-matched { background: #e8f5e9; color: #2e7d32; }
 .badge-unmatched { background: #fff3e0; color: var(--warning); }
 .badge-chevron { background: transparent; color: var(--text-muted); font-size: 0.85rem; transition: transform 0.2s; }
