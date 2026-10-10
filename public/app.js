@@ -507,6 +507,124 @@ const refreshGroupsBtn  = document.getElementById('refreshGroupsBtn');
 
 refreshGroupsBtn.addEventListener('click', () => syncGroups());
 
+// ── WhatsApp group IDs ────────────────────────────────────────────────────────
+// Deliberately load-on-demand: the underlying getChats() sweep is heavy enough
+// to have detached the frame in the past, so it never runs just because the
+// Groups tab was opened.
+const loadWaGroupsBtn = document.getElementById('loadWaGroupsBtn');
+const waGroupsAge     = document.getElementById('waGroupsAge');
+const waGroupSearch   = document.getElementById('waGroupSearch');
+const waGroupsLoading = document.getElementById('waGroupsLoading');
+const waGroupsError   = document.getElementById('waGroupsError');
+const waGroupsList    = document.getElementById('waGroupsList');
+
+let _waGroups = [];
+
+loadWaGroupsBtn.addEventListener('click', () => loadWaGroups(_waGroups.length > 0));
+waGroupSearch.addEventListener('input', () => _renderWaGroups());
+
+async function loadWaGroups(refresh) {
+  loadWaGroupsBtn.disabled   = true;
+  waGroupsError.style.display   = 'none';
+  waGroupsLoading.style.display = 'block';
+  waGroupsList.innerHTML = '';
+
+  try {
+    const res  = await fetch(`/api/chat-messages/wa-groups${refresh ? '?refresh=1' : ''}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+    _waGroups = data.groups || [];
+    const when = data.cachedAt ? new Date(data.cachedAt) : new Date();
+    waGroupsAge.textContent = `${_waGroups.length} groups · read ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    loadWaGroupsBtn.textContent = '🔄 Reload';
+    waGroupSearch.style.display = _waGroups.length ? 'block' : 'none';
+    _renderWaGroups();
+  } catch (err) {
+    waGroupsError.textContent = `Could not read groups: ${err.message}`;
+    waGroupsError.style.display = 'block';
+  } finally {
+    waGroupsLoading.style.display = 'none';
+    loadWaGroupsBtn.disabled = false;
+  }
+}
+
+function _renderWaGroups() {
+  const q = waGroupSearch.value.trim().toLowerCase();
+  const rows = q ? _waGroups.filter((g) => g.name.toLowerCase().includes(q)) : _waGroups;
+
+  if (!rows.length) {
+    waGroupsList.innerHTML = `<p style="color:var(--text-muted);font-size:0.9rem;">${
+      _waGroups.length ? 'No group matches that filter.' : 'No groups found.'}</p>`;
+    return;
+  }
+
+  waGroupsList.innerHTML = `
+    <div class="wa-group-rows">
+      ${rows.map((g) => `
+        <div class="wa-group-row">
+          <span class="wa-group-name" title="${_esc(g.name)}">${_esc(g.name)}</span>
+          <code class="wa-group-id">${_esc(g.id)}</code>
+          <button class="btn btn-ghost wa-copy-btn" data-id="${_esc(g.id)}">Copy</button>
+        </div>`).join('')}
+    </div>`;
+
+  waGroupsList.querySelectorAll('.wa-copy-btn').forEach((btn) => {
+    btn.addEventListener('click', () => _copyGroupId(btn));
+  });
+}
+
+/**
+ * navigator.clipboard only exists in a secure context, and this app is normally
+ * served over plain http — so execCommand is the path that matters in practice,
+ * not the fallback. Try the modern API when it is there, but drop to execCommand
+ * if it throws (permission, focus) rather than giving up, and only ask the user
+ * to copy by hand when both fail.
+ */
+async function _copyGroupId(btn) {
+  const id = btn.dataset.id;
+
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(id);
+      _copyFeedback(btn, '✓ Copied');
+      return;
+    } catch (_) { /* fall through to execCommand */ }
+  }
+
+  let ok = false;
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = id;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity  = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, id.length);
+    ok = document.execCommand('copy');     // returns false instead of throwing
+    document.body.removeChild(ta);
+  } catch (_) { ok = false; }
+
+  if (ok) { _copyFeedback(btn, '✓ Copied'); return; }
+
+  // Last resort: select the id so Ctrl+C works.
+  const el = btn.parentElement.querySelector('.wa-group-id');
+  if (el) {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  _copyFeedback(btn, 'Press Ctrl+C');
+}
+
+function _copyFeedback(btn, text) {
+  btn.textContent = text;
+  setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
+}
+
 // Load from local file — fast, no network
 async function loadGroups() {
   groupsLoading.style.display   = 'block';

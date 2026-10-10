@@ -37,6 +37,39 @@ router.get('/health', async (req, res) => {
   }
 });
 
+// GET /api/chat-messages/wa-groups — every group this account belongs to, with
+// the id to paste into the sheet. Backed by getChats(), which sweeps the whole
+// chat list and has detached the frame before, so the result is cached and only
+// re-read when ?refresh=1 is asked for explicitly. The UI never calls it on its
+// own for the same reason.
+const _waGroupsCache = { groups: null, at: 0 };
+
+router.get('/wa-groups', async (req, res) => {
+  const refresh = req.query.refresh === '1';
+  if (!refresh && _waGroupsCache.groups) {
+    return res.json({ groups: _waGroupsCache.groups, cachedAt: _waGroupsCache.at, cached: true });
+  }
+  try {
+    await wa.assertConnected();
+    const groups = (await wa.getClient().getChats())
+      .filter((c) => c.isGroup)
+      .map((c) => ({
+        name: c.name || '(unnamed group)',
+        id:   String(c.id?._serialized || c.id?.$1 || '').replace(/@g\.us$/, ''),
+        lastActivity: c.timestamp || 0,
+      }))
+      .filter((g) => g.id)
+      .sort((a, b) => b.lastActivity - a.lastActivity);
+
+    _waGroupsCache.groups = groups;
+    _waGroupsCache.at     = Date.now();
+    res.json({ groups, cachedAt: _waGroupsCache.at, cached: false });
+  } catch (err) {
+    console.warn('[ChatMessages] wa-groups failed:', err.message);
+    res.status(503).json({ error: err.message });
+  }
+});
+
 // GET /api/chat-messages/chats — list all WA chats sorted by recency
 router.get('/chats', async (req, res) => {
   try {

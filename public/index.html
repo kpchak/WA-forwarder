@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WA Customer Manager</title>
-  <link rel="stylesheet" href="style.css?v=16" />
+  <link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
 <div class="app">
@@ -124,6 +124,35 @@
 
       <!-- Grid -->
       <div class="groups-grid" id="groupsGrid"></div>
+    </div>
+
+    <!-- WhatsApp group IDs — for pasting into the sheet's phone column -->
+    <div class="card" style="margin-top:18px;">
+      <div class="groups-toolbar">
+        <span class="card-title" style="margin:0">💬 WhatsApp Groups</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="cache-age" id="waGroupsAge"></span>
+          <button class="btn btn-ghost" id="loadWaGroupsBtn" style="padding:7px 14px;font-size:0.82rem;">📥 Load</button>
+        </div>
+      </div>
+
+      <p class="qr-sub" style="margin:0 0 12px;">
+        Every group this WhatsApp account belongs to, with the ID to paste into the
+        <strong>phone</strong> column of a sheet tab. Loading reads the full chat list
+        from WhatsApp, so it is not automatic — press Load when you need it.
+      </p>
+
+      <input type="text" id="waGroupSearch" class="form-input" placeholder="Filter by group name…"
+             style="display:none; margin-bottom:12px;" />
+
+      <div id="waGroupsLoading" style="display:none; text-align:center; padding:30px; color:var(--text-muted);">
+        <div class="spinner" style="margin:0 auto 12px;"></div>
+        Reading groups from WhatsApp…
+      </div>
+
+      <div id="waGroupsError" style="display:none; background:#ffebee; border:1px solid #ef9a9a; border-radius:8px; padding:14px 16px; color:#c62828; font-size:0.88rem;"></div>
+
+      <div id="waGroupsList"></div>
     </div>
   </div>
 
@@ -425,6 +454,6 @@
 </div><!-- /.app -->
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=22"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>

@@ -587,3 +587,19 @@ body {
   .tab-btn { min-width: 70px; font-size: 0.78rem; }
   .qr-box img { width: 220px; height: 220px; }
 }
+
+/* WhatsApp group ID list */
+.wa-group-rows { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; }
+.wa-group-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.wa-group-name { flex: 1 1 auto; min-width: 6rem; font-size: 0.88rem; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wa-group-id { flex: 0 0 auto; font-family: monospace; font-size: 0.78rem; color: var(--text-muted);
+  user-select: all; }
+.wa-copy-btn { flex: 0 0 auto; padding: 4px 10px; font-size: 0.75rem; }
+@media (max-width: 560px) {
+  .wa-group-row { flex-wrap: wrap; }
+  .wa-group-id { flex: 1 1 100%; }
+}
