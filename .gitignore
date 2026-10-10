@@ -50,3 +50,6 @@ build/
 *.zip
 *.tar.gz
 RemoteAuth-whatsapp-forwarder-client.zip
+
+# Local training notes — not part of the app
+public/custom_training.txt
