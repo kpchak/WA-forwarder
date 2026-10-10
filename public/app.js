@@ -580,6 +580,8 @@ function buildGroupCard(group) {
     <div class="group-card-header" data-expanded="false">
       <span class="group-name" title="${_esc(group.name)}">👥 ${_esc(group.name)}</span>
       <div class="group-badges">
+        ${group.sheetUrl ? `<a class="badge badge-sheet" href="${_esc(group.sheetUrl)}" target="_blank" rel="noopener noreferrer"
+             title="Open this group's tab in Google Sheets">📊 Sheet</a>` : ''}
         <span class="badge badge-count">${group.members?.length || 0} members</span>
         <span class="badge badge-chevron">▼</span>
       </div>
@@ -603,7 +605,10 @@ function buildGroupCard(group) {
   const list     = card.querySelector('.member-list');
   const chevron  = card.querySelector('.badge-chevron');
 
-  header.addEventListener('click', () => {
+  header.addEventListener('click', (e) => {
+    // The Sheet link lives inside the header; opening it must not also
+    // expand/collapse the card underneath.
+    if (e.target.closest('.badge-sheet')) return;
     const expanded = header.dataset.expanded === 'true';
     header.dataset.expanded = String(!expanded);
     list.classList.toggle('open', !expanded);

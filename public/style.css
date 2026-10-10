@@ -381,6 +381,8 @@ body {
   border-radius: 999px; white-space: nowrap;
 }
 .badge-count   { background: #e8f5e9; color: #2e7d32; }
+.badge-sheet   { background: #e3f2fd; color: #1565c0; text-decoration: none; cursor: pointer; }
+.badge-sheet:hover { background: #bbdefb; }
 .badge-matched { background: #e8f5e9; color: #2e7d32; }
 .badge-unmatched { background: #fff3e0; color: var(--warning); }
 .badge-chevron { background: transparent; color: var(--text-muted); font-size: 0.85rem; transition: transform 0.2s; }

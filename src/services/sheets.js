@@ -40,6 +40,18 @@ async function fetchGroups(forceRefresh = false) {
   return _groups;
 }
 
+/**
+ * Link to the spreadsheet, at a specific tab when its gid is known. Groups
+ * saved before gids were captured simply land on the spreadsheet's first tab,
+ * which is still better than hunting for the file.
+ */
+function spreadsheetUrl(gid) {
+  const id = process.env.GOOGLE_SPREADSHEET_ID;
+  if (!id) return null;
+  const base = `https://docs.google.com/spreadsheets/d/${id}/edit`;
+  return gid === undefined || gid === null ? base : `${base}#gid=${gid}`;
+}
+
 function getStoreInfo() {
   return {
     hasSavedData: _groups !== null && _groups.length > 0,
@@ -105,9 +117,14 @@ async function _fetchFromSheets() {
   const sheets        = google.sheets({ version: 'v4', auth });
   const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
 
-  // Get all tab names
-  const meta = await sheets.spreadsheets.get({ spreadsheetId });
-  const tabs  = meta.data.sheets.map((s) => s.properties.title);
+  // Get all tab names, keeping each tab's gid so a group can deep-link back to
+  // its own tab rather than dumping the reader at the first one.
+  const meta    = await sheets.spreadsheets.get({ spreadsheetId });
+  const tabMeta = meta.data.sheets.map((s) => ({
+    title: s.properties.title,
+    gid:   s.properties.sheetId,
+  }));
+  const tabs = tabMeta.map((t) => t.title);
   if (tabs.length === 0) return [];
 
   // Batch-fetch every tab in one request
@@ -146,7 +163,7 @@ async function _fetchFromSheets() {
       });
     }
 
-    if (members.length > 0) groups.push({ name: tabName, members });
+    if (members.length > 0) groups.push({ name: tabName, gid: tabMeta[i].gid, members });
   }
 
   console.log(`[Sheets] Fetched ${groups.length} groups from Google Sheets`);
@@ -167,4 +184,4 @@ function _normalisePhone(raw) {
   return raw.replace(/\D/g, '');
 }
 
-module.exports = { fetchGroups, isConfigured, getStoreInfo };
+module.exports = { fetchGroups, isConfigured, getStoreInfo, spreadsheetUrl };
