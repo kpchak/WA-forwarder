@@ -6,6 +6,7 @@ const { MessageMedia }           = require('whatsapp-web.js');
 const wa                         = require('../whatsapp/client');
 const sheets                     = require('../services/sheets');
 const { resolveTemplates }       = require('../utils/templates');
+const { toWAId: _toWAId } = require("../utils/waId");
 
 // ── POST /api/messages/send ───────────────────────────────────────────────────
 // Sends a message to every phone number in the named sheet group.
@@ -116,18 +117,6 @@ router.get('/groups', async (req, res) => {
  * - Long number (≥15 digits) or already has @g.us  → group chat ID
  * - Regular phone number                            → individual contact
  */
-function _toWAId(raw) {
-  if (!raw) return null;
-  const clean = raw.trim().replace(/\s/g, '');
-
-  if (clean.endsWith('@g.us') || clean.endsWith('@c.us')) return clean;
-
-  const digits = clean.replace(/\D/g, '');
-  if (!digits) return null;
-
-  // WhatsApp group IDs are 15–17 digits; phone numbers are 10–14
-  return digits.length >= 15 ? `${digits}@g.us` : `${digits}@c.us`;
-}
 
 function _sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

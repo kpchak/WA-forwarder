@@ -6,6 +6,7 @@ const wa               = require('../whatsapp/client');
 const sheets           = require('../services/sheets');
 const { MessageMedia }   = require('whatsapp-web.js');
 const { resolveTemplates } = require('../utils/templates');
+const { toWAId: _toWAId } = require("../utils/waId");
 
 // Cache loaded Message objects (30-min TTL) so media can be fetched on demand
 const _msgCache = new Map(); // serializedId → { msg, savedAt }
@@ -217,14 +218,6 @@ router.post('/forward', async (req, res) => {
   }
 });
 
-function _toWAId(raw) {
-  if (!raw) return null;
-  const clean = raw.trim().replace(/\s/g, '');
-  if (clean.endsWith('@g.us') || clean.endsWith('@c.us')) return clean;
-  const digits = clean.replace(/\D/g, '');
-  if (!digits) return null;
-  return digits.length >= 15 ? `${digits}@g.us` : `${digits}@c.us`;
-}
 
 function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 

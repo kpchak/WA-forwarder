@@ -5,6 +5,7 @@ const fs                   = require('fs');
 const path                 = require('path');
 const { MessageMedia }     = require('whatsapp-web.js');
 const { resolveTemplates } = require('../utils/templates');
+const { toWAId: _toWAId } = require("../utils/waId");
 
 const STORE_PATH = path.join(__dirname, '../../data/schedules.json');
 const TIMEZONE   = process.env.SCHEDULE_TIMEZONE || 'Asia/Kolkata';
@@ -290,14 +291,6 @@ function _nextRun(schedule) {
   return null;
 }
 
-function _toWAId(raw) {
-  if (!raw) return null;
-  const clean = raw.trim().replace(/\s/g, '');
-  if (clean.endsWith('@g.us') || clean.endsWith('@c.us')) return clean;
-  const digits = clean.replace(/\D/g, '');
-  if (!digits) return null;
-  return digits.length >= 15 ? `${digits}@g.us` : `${digits}@c.us`;
-}
 
 function _validateInput(data) {
   const hasGroup = (Array.isArray(data.groupNames) && data.groupNames.length) || data.groupName;

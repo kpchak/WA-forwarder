@@ -181,6 +181,13 @@ function _normalisePhone(raw) {
   if (!raw) return '';
   const lower = raw.toLowerCase();
   if (lower.endsWith('@g.us') || lower.endsWith('@c.us')) return raw.replace(/\s/g, '');
+
+  // Legacy group ids are <creator number>-<creation timestamp>; the hyphen is
+  // part of the id, so the digits-only rule below would destroy it on import
+  // and every later lookup would address a group that does not exist.
+  const compact = raw.replace(/\s/g, '');
+  if (/^\d+-\d+$/.test(compact)) return compact;
+
   return raw.replace(/\D/g, '');
 }
 
