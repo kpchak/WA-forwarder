@@ -63,6 +63,15 @@ async function _chatSweep(force = false) {
   _sweepLock = (async () => {
     await wa.assertConnected();
     const chats = await wa.getClient().getChats();
+
+    // An empty list from an account with hundreds of chats means the page is
+    // not really ready — usually moments after a restart. Fail instead of
+    // caching it: a cached empty sweep reports every group as "not found" for
+    // the next ten minutes, which is both wrong and hard to interpret.
+    if (!chats.length) {
+      throw new Error('WhatsApp returned an empty chat list — the client is still settling, try again shortly');
+    }
+
     _sweep.chats  = chats;
     _sweep.groups = chats
       .filter((c) => c.isGroup)
@@ -114,6 +123,37 @@ router.get('/chats', async (req, res) => {
   }
 });
 
+const FETCH_LIMIT_START = 500;
+const FETCH_LIMIT_MAX   = Number(process.env.MESSAGE_FETCH_MAX || 2000);
+
+/**
+ * fetchMessages({limit}) has no cursor: it pages backwards with loadEarlierMsgs
+ * until it holds `limit` messages, then keeps the newest `limit`. So a flat 500
+ * silently truncated any window holding more than that — you got the most recent
+ * 500 and no hint that older ones in range existed.
+ *
+ * Raise the limit until the oldest message loaded predates the window start, or
+ * the chat runs out of history, or the cap is reached. Each step refetches from
+ * scratch (the library offers nothing finer), so the cap matters: this page work
+ * is what detaches the frame when overdone.
+ */
+async function _fetchCovering(chat, fromSec) {
+  let limit = FETCH_LIMIT_START;
+  let msgs  = await chat.fetchMessages({ limit });
+
+  // msgs come back oldest-first, so msgs[0] is the furthest back we have.
+  const needsMore = () => msgs.length >= limit && limit < FETCH_LIMIT_MAX &&
+                          msgs.length > 0 && msgs[0].timestamp > fromSec;
+
+  while (needsMore()) {
+    limit = Math.min(limit * 2, FETCH_LIMIT_MAX);
+    msgs  = await chat.fetchMessages({ limit });
+  }
+
+  const truncated = msgs.length >= limit && msgs.length > 0 && msgs[0].timestamp > fromSec;
+  return { msgs, truncated };
+}
+
 // POST /api/chat-messages/load — fetch messages for a list of phone numbers
 router.post('/load', async (req, res) => {
   try {
@@ -133,11 +173,24 @@ router.post('/load', async (req, res) => {
     // Groups can only be reached through the chat sweep — getChatById() on a
     // group id detaches the frame. Sweep once up front, and only when a group
     // is actually selected, rather than once per contact inside the loop.
+    const wantedGroupIds = uniquePhones
+      .map((p) => _toWAId(p))
+      .filter((id) => id && id.endsWith('@g.us'));
+
     let groupIndex = null;
-    if (uniquePhones.some((p) => (_toWAId(p) || '').endsWith('@g.us'))) {
+    if (wantedGroupIds.length) {
       try {
-        const sweep = await _chatSweep();
-        groupIndex = new Map((sweep.chats || []).map((c) => [_chatId(c), c]));
+        const build = (sweep) => new Map((sweep.chats || []).map((c) => [_chatId(c), c]));
+        groupIndex  = build(await _chatSweep());
+
+        // Shortly after a restart getChats() can return a partial list: enough
+        // chats to look healthy, but not yet the one being asked for. Treating
+        // that as "this group does not exist" is wrong and was reported as such.
+        // Re-sweep once before believing a miss.
+        if (wantedGroupIds.some((id) => !groupIndex.has(id))) {
+          console.warn('[ChatMessages] Group missing from chat list — re-reading once');
+          groupIndex = build(await _chatSweep(true));
+        }
       } catch (err) {
         warnings.push(`Could not read the group list: ${err.message}`);
       }
@@ -162,8 +215,17 @@ router.post('/load', async (req, res) => {
         } else {
           chat = await client.getChatById(waId);
         }
-        const msgs = await chat.fetchMessages({ limit: 500 });
-        const out  = [];
+        const { msgs, truncated } = await _fetchCovering(chat, fromSec);
+        if (truncated) {
+          // Report what was actually returned, not the cap: the first fetch is
+          // already FETCH_LIMIT_START and the loop only ever raises the limit,
+          // so the two differ whenever the cap sits below the starting size.
+          warnings.push(
+            `${phone}: too much history in this range — showing only the most recent ` +
+            `${msgs.length} messages. Narrow the dates to see older ones.`
+          );
+        }
+        const out = [];
         for (const m of msgs) {
           if (m.timestamp < fromSec || m.timestamp > toSec) continue;
           const sid = m.id._serialized;
