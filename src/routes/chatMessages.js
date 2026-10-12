@@ -42,28 +42,52 @@ router.get('/health', async (req, res) => {
 // chat list and has detached the frame before, so the result is cached and only
 // re-read when ?refresh=1 is asked for explicitly. The UI never calls it on its
 // own for the same reason.
-const _waGroupsCache = { groups: null, at: 0 };
+const SWEEP_TTL_MS = 10 * 60 * 1000;
+const _sweep = { chats: null, groups: null, at: 0 };
+let _sweepLock = null;   // one sweep at a time, however many callers want it
 
-router.get('/wa-groups', async (req, res) => {
-  const refresh = req.query.refresh === '1';
-  if (!refresh && _waGroupsCache.groups) {
-    return res.json({ groups: _waGroupsCache.groups, cachedAt: _waGroupsCache.at, cached: true });
-  }
-  try {
+function _chatId(c) {
+  return String(c.id?._serialized || c.id?.$1 || '');   // $1: renamed by WhatsApp, Jul 2026
+}
+
+/**
+ * getChats() once, shared by the group picker and by group message loading.
+ * It is the heavy call that detached the frame repeatedly in late September, so
+ * it is cached, never run concurrently, and never triggered just by opening a
+ * tab — only by an explicit Load, or by a load that actually names a group.
+ */
+async function _chatSweep(force = false) {
+  if (!force && _sweep.chats && Date.now() - _sweep.at < SWEEP_TTL_MS) return _sweep;
+  if (_sweepLock) return _sweepLock;
+
+  _sweepLock = (async () => {
     await wa.assertConnected();
-    const groups = (await wa.getClient().getChats())
+    const chats = await wa.getClient().getChats();
+    _sweep.chats  = chats;
+    _sweep.groups = chats
       .filter((c) => c.isGroup)
       .map((c) => ({
         name: c.name || '(unnamed group)',
-        id:   String(c.id?._serialized || c.id?.$1 || '').replace(/@g\.us$/, ''),
+        id:   _chatId(c).replace(/@g\.us$/, ''),
         lastActivity: c.timestamp || 0,
       }))
       .filter((g) => g.id)
       .sort((a, b) => b.lastActivity - a.lastActivity);
+    _sweep.at = Date.now();
+    return _sweep;
+  })().finally(() => { _sweepLock = null; });
 
-    _waGroupsCache.groups = groups;
-    _waGroupsCache.at     = Date.now();
-    res.json({ groups, cachedAt: _waGroupsCache.at, cached: false });
+  return _sweepLock;
+}
+
+router.get('/wa-groups', async (req, res) => {
+  const refresh = req.query.refresh === '1';
+  if (!refresh && _sweep.groups) {
+    return res.json({ groups: _sweep.groups, cachedAt: _sweep.at, cached: true });
+  }
+  try {
+    const s = await _chatSweep(true);
+    res.json({ groups: s.groups, cachedAt: s.at, cached: false });
   } catch (err) {
     console.warn('[ChatMessages] wa-groups failed:', err.message);
     res.status(503).json({ error: err.message });
@@ -106,22 +130,38 @@ router.post('/load', async (req, res) => {
 
     const warnings = [];
 
-    // Fetch each contact's chat in parallel
-    const perPhone = await Promise.all(uniquePhones.map(async (phone) => {
+    // Groups can only be reached through the chat sweep — getChatById() on a
+    // group id detaches the frame. Sweep once up front, and only when a group
+    // is actually selected, rather than once per contact inside the loop.
+    let groupIndex = null;
+    if (uniquePhones.some((p) => (_toWAId(p) || '').endsWith('@g.us'))) {
+      try {
+        const sweep = await _chatSweep();
+        groupIndex = new Map((sweep.chats || []).map((c) => [_chatId(c), c]));
+      } catch (err) {
+        warnings.push(`Could not read the group list: ${err.message}`);
+      }
+    }
+
+    // Fetching every contact at once is what detaches the frame: a busy group
+    // can return the full 500-message page, and several of those in flight
+    // together overwhelm the page. Two groups in parallel worked; four did not.
+    // DMs are cheap and stay parallel; groups are fetched one at a time.
+    const fetchOne = async (phone) => {
       const waId = _toWAId(phone);
       if (!waId) return [];
       try {
-        // Groups are skipped deliberately. Both ways of reaching a group chat
-        // detach the Puppeteer frame on this client — getChatById() on a group
-        // id, and the getChats() sweep needed to look one up — and a detached
-        // frame kills the session and empties the whole load, not just that
-        // row. Skipping keeps every other selected contact working.
+        let chat;
         if (waId.endsWith('@g.us')) {
-          warnings.push(`${phone} is a group — group chats can't be read on this client yet`);
-          console.warn(`[ChatMessages] Skipping group ${waId} (would detach the frame)`);
-          return [];
+          chat = groupIndex?.get(waId);
+          if (!chat) {
+            warnings.push(`${phone}: group not found in the WhatsApp chat list`);
+            console.warn(`[ChatMessages] Group ${waId} not in chat list — skipped`);
+            return [];
+          }
+        } else {
+          chat = await client.getChatById(waId);
         }
-        const chat = await client.getChatById(waId);
         const msgs = await chat.fetchMessages({ limit: 500 });
         const out  = [];
         for (const m of msgs) {
@@ -148,7 +188,17 @@ router.post('/load', async (req, res) => {
         console.warn(`[ChatMessages] No chat for ${phone}: ${err.message}`);
         return [];
       }
-    }));
+    };
+
+    const isGroupPhone = (p) => (_toWAId(p) || '').endsWith('@g.us');
+    const dmPhones     = uniquePhones.filter((p) => !isGroupPhone(p));
+    const groupPhones  = uniquePhones.filter(isGroupPhone);
+
+    const perPhone = await Promise.all(dmPhones.map(fetchOne));
+    for (const phone of groupPhones) {
+      perPhone.push(await fetchOne(phone));
+      if (groupPhones.length > 1) await _sleep(300);   // let the page breathe
+    }
 
     const messages = perPhone.flat().sort((a, b) => a.timestamp - b.timestamp);
     res.json(warnings.length ? { messages, warnings } : { messages });

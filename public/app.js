@@ -1256,6 +1256,7 @@ let _vmsgTabReady  = false;
 let _vmsgGroupsData = [];      // [{ name, members:[{name,phone}] }] from sheets
 let _vmsgContacts   = [];      // current group's members
 let _vmsgMessages   = [];      // loaded messages (full, incl. mine)
+let _vmsgWarnings = [];
 let _vmsgSelected   = new Set();
 
 const msgGroupSel          = document.getElementById('msgGroupSel');
@@ -1520,6 +1521,7 @@ msgLoadBtn.addEventListener('click', async () => {
   if (!phones.length) return _vmsgSetError('Please select at least one contact.');
 
   _vmsgMessages = [];
+  _vmsgWarnings = [];
   _vmsgSelected.clear();
   _codesLoaded  = false;
   msgCodePanel.style.display  = 'none';
@@ -1545,6 +1547,7 @@ msgLoadBtn.addEventListener('click', async () => {
     if (!res.ok) throw new Error(data.error);
 
     _vmsgMessages = data.messages || [];
+    _vmsgWarnings = data.warnings || [];
     _vmsgRenderMessages();
   } catch (err) {
     msgLoading.style.display = 'none';
@@ -1557,6 +1560,25 @@ msgShowMine.addEventListener('change', () => {
 });
 
 // ── Render message list ───────────────────────────────────────────────────────
+
+// Surface per-contact failures. The API has reported these since the detached-
+// frame work, but nothing displayed them, so a skipped contact looked exactly
+// like a quiet one — which is how the group block went unexplained for days.
+function _vmsgRenderWarnings() {
+  let box = document.getElementById('msgWarnings');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'msgWarnings';
+    box.className = 'msg-warnings';
+    msgEmpty.parentElement.insertBefore(box, msgEmpty);
+  }
+  if (!_vmsgWarnings.length) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const n = _vmsgWarnings.length;
+  box.innerHTML = `<strong>${n} contact${n !== 1 ? 's' : ''} could not be read</strong>` +
+    `<ul>${_vmsgWarnings.map((w) => `<li>${_esc(w)}</li>`).join('')}</ul>`;
+}
+
 function _vmsgRenderMessages() {
   msgLoading.style.display = 'none';
   msgError.style.display   = 'none';
@@ -1564,10 +1586,16 @@ function _vmsgRenderMessages() {
   const showMine = msgShowMine.checked;
   const visible  = showMine ? _vmsgMessages : _vmsgMessages.filter((m) => !m.fromMe);
 
+  _vmsgRenderWarnings();
+
   if (!visible.length) {
+    // Never report "no messages" when contacts actually failed to load — that
+    // reads as "nothing was said" when the truth is "we could not look".
     msgEmpty.textContent = _vmsgMessages.length
       ? 'No messages from contacts in this range. Check "Show my messages" to include yours.'
-      : 'No messages found in this time range.';
+      : (_vmsgWarnings.length
+          ? 'Nothing could be loaded for the selected contacts — see the note above.'
+          : 'No messages found in this time range.');
     msgEmpty.style.display         = 'block';
     msgList.style.display          = 'none';
     msgSelectAllWrap.style.display = 'none';

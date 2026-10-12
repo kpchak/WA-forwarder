@@ -603,3 +603,11 @@ body {
   .wa-group-row { flex-wrap: wrap; }
   .wa-group-id { flex: 1 1 100%; }
 }
+
+/* Per-contact load failures in the Messages tab */
+.msg-warnings {
+  display: none; background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px;
+  padding: 12px 14px; margin-bottom: 14px; color: #8d6e00; font-size: 0.85rem;
+}
+.msg-warnings ul { margin: 6px 0 0; padding-left: 20px; }
+.msg-warnings li { margin: 2px 0; word-break: break-word; }
