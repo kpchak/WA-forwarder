@@ -189,7 +189,7 @@ async function _fwdUpdate(id, patch) {
 }
 
 async function _fwdDelete(id) {
-  await fetch(`/api/forward-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await fetch(`/api/forward-rules/${encodeURIComponent(id)}?confirm=1`, { method: 'DELETE' });
   loadForwardRules();
 }
 

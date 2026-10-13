@@ -28,12 +28,36 @@ router.put('/:id', (req, res) => {
 });
 
 // ── DELETE /api/forward-rules/:id ─────────────────────────────────────────────
+// Requires an explicit confirm. A bare DELETE is refused on purpose: a cleanup
+// script looped over every rule and deleted them all, including ones a person
+// had created, and the configuration was unrecoverable. The UI's confirm dialog
+// does not help a script — this does.
 router.delete('/:id', (req, res) => {
+  const confirmed = req.query.confirm === '1' || req.body?.confirm === true;
+  if (!confirmed) {
+    return res.status(400).json({
+      error: 'Refusing to delete without confirmation — pass ?confirm=1 (the UI does this for you)',
+    });
+  }
   try {
-    rules.remove(req.params.id);
-    res.json({ ok: true });
+    const result = rules.remove(req.params.id);
+    res.json({ ok: true, backup: result.backup, deleted: result.deleted.label });
   } catch (err) {
     res.status(404).json({ error: err.message });
+  }
+});
+
+// ── GET /api/forward-rules/backups ────────────────────────────────────────────
+router.get('/backups', (req, res) => {
+  res.json({ backups: rules.listBackups() });
+});
+
+// ── POST /api/forward-rules/backups/:file/restore ─────────────────────────────
+router.post('/backups/:file/restore', (req, res) => {
+  try {
+    res.json({ ok: true, restored: rules.restoreBackup(req.params.file) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

@@ -50,6 +50,69 @@ function _write(file, data) {
   }
 }
 
+const BACKUP_DIR  = path.join(__dirname, '../../data/forward-backups');
+const KEEP_BACKUPS = 30;
+
+/**
+ * Snapshot rules + pending before anything destructive.
+ *
+ * Written after a cleanup script deleted every rule and dismissed every pending
+ * item, including ones a person had created: the pending entries survived only
+ * because they are soft-deleted, and the rule configuration was gone for good.
+ */
+function backup(reason) {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const name  = `${stamp}-${String(reason || 'change').replace(/[^a-z0-9_-]/gi, '')}.json`;
+    fs.writeFileSync(
+      path.join(BACKUP_DIR, name),
+      JSON.stringify({ savedAt: new Date().toISOString(), reason, rules: _rules, pending: _pending }, null, 2)
+    );
+
+    const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.json')).sort();
+    for (const old of files.slice(0, Math.max(0, files.length - KEEP_BACKUPS))) {
+      fs.unlinkSync(path.join(BACKUP_DIR, old));
+    }
+    return name;
+  } catch (err) {
+    console.error(`[Forward] Backup failed (${reason}): ${err.message}`);
+    return null;
+  }
+}
+
+function listBackups() {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) return [];
+    return fs.readdirSync(BACKUP_DIR)
+      .filter((f) => f.endsWith('.json'))
+      .sort().reverse()
+      .map((f) => {
+        const d = _read(path.join(BACKUP_DIR, f), {});
+        return { file: f, savedAt: d.savedAt || null, reason: d.reason || '',
+                 rules: (d.rules || []).length, pending: (d.pending || []).length };
+      });
+  } catch (err) {
+    return [];
+  }
+}
+
+function restoreBackup(file) {
+  if (!/^[\w.\-:]+\.json$/.test(file)) throw new Error('Invalid backup name');
+  const full = path.join(BACKUP_DIR, file);
+  if (!fs.existsSync(full)) throw new Error('Backup not found');
+
+  backup('before-restore');            // the restore is itself destructive
+  const data = _read(full, null);
+  if (!data) throw new Error('Backup unreadable');
+
+  _rules   = data.rules   || [];
+  _pending = data.pending || [];
+  _saveRules();
+  _savePending();
+  return { rules: _rules.length, pending: _pending.length };
+}
+
 function _saveRules()   { _write(RULES_PATH,   { rules: _rules }); }
 function _savePending() { _write(PENDING_PATH, { pending: _pending }); }
 function _saveSeen()    { _write(SEEN_PATH,    { ids: _seen.slice(-SEEN_CAP) }); }
@@ -166,10 +229,14 @@ function update(id, data) {
 }
 
 function remove(id) {
-  const before = _rules.length;
+  const rule = _rules.find((x) => x.id === id);
+  if (!rule) throw new Error('Rule not found');
+
+  const file = backup(`delete-rule`);
   _rules = _rules.filter((x) => x.id !== id);
-  if (_rules.length === before) throw new Error('Rule not found');
   _saveRules();
+  console.log(`[Forward] Deleted rule "${rule.label}" (backup: ${file})`);
+  return { deleted: rule, backup: file };
 }
 
 // ── Polling ───────────────────────────────────────────────────────────────────
@@ -360,6 +427,7 @@ async function approve(pendingId) {
 function dismiss(pendingId) {
   const match = _pending.find((p) => p.id === pendingId);
   if (!match) throw new Error('Pending item not found');
+  backup('dismiss-pending');
   match.status      = 'dismissed';
   match.dismissedAt = new Date().toISOString();
   _savePending();
@@ -400,6 +468,7 @@ function init() {
 
 module.exports = {
   init, list, create, update, remove,
+  backup, listBackups, restoreBackup,
   listPending, approve, dismiss, checkNow, deliver, tick,
   // exported for tests
   messageMatches, timestampInWindow, _inWindow,
