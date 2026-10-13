@@ -244,6 +244,7 @@ function _fwdRenderPending() {
     <div class="fwd-pending" data-id="${_esc(p.id)}">
       <div class="fwd-rule-meta">${_esc(p.ruleLabel)} · from ${_esc(p.author)} ·
         ${new Date(p.timestamp * 1000).toLocaleString()}${p.hasMedia ? ' · <strong>has an attachment</strong>' : ''}</div>
+      <div class="fwd-rule-meta">→ will be sent to <strong>${_esc(_fwdTargetLabel(p.ruleId))}</strong></div>
       <div class="fwd-pending-body">${_esc(p.body || '(no text)')}</div>
       <div class="fwd-rule-actions">
         <button class="btn btn-primary fwd-approve">✅ Send it</button>
@@ -258,8 +259,18 @@ function _fwdRenderPending() {
   });
 }
 
+/** Who a pending item would go to — shown before approval, not after. */
+function _fwdTargetLabel(ruleId) {
+  const r = _fwdRules.find((x) => x.id === ruleId);
+  if (!r) return 'unknown — the rule no longer exists';
+  return r.targetType === 'chat'
+    ? `the WhatsApp group ${r.targetChatId}`
+    : `every member of ${r.targetSheetGroup}`;
+}
+
 async function _fwdApprove(id, row) {
-  if (!confirm('Send this message now?')) return;
+  const item = _fwdPending.find((p) => p.id === id);
+  if (!confirm(`Send this message to ${_fwdTargetLabel(item && item.ruleId)}?\n\nThis cannot be taken back.`)) return;
   const btn = row.querySelector('.fwd-approve');
   btn.disabled = true;
   btn.textContent = '⏳ Sending…';
