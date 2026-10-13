@@ -626,3 +626,4 @@ body {
   margin: 8px 0; padding: 10px 12px; background: #fff; border: 1px solid var(--border);
   border-radius: 8px; font-size: 0.88rem; white-space: pre-wrap; word-break: break-word;
 }
+.fwd-range { width: auto; padding: 4px 8px; font-size: 0.78rem; }

@@ -59,19 +59,27 @@ async function _fwdFillPickers() {
 async function _fwdFillTargets() {
   const type = document.getElementById('fwdTargetType').value;
   const sel  = document.getElementById('fwdTarget');
+  // Always lead with an empty option. Without one the browser pre-selects the
+  // first entry — in sheet-group mode that is the largest list on the sheet, so
+  // saving a rule without touching this dropdown would quietly target everyone.
+  const placeholder = '<option value="">— select a target —</option>';
+
   if (type === 'sheetGroup') {
     try {
       const res  = await fetch('/api/groups');
       const data = await res.json();
-      sel.innerHTML = (data.groups || [])
-        .map((g) => `<option value="${_esc(g.name)}">${_esc(g.name)} (${g.members ? g.members.length : 0} members)</option>`)
+      sel.innerHTML = placeholder + (data.groups || [])
+        .map((g) => {
+          const n = g.members ? g.members.length : 0;
+          return `<option value="${_esc(g.name)}">${_esc(g.name)} (${n} member${n === 1 ? '' : 's'})</option>`;
+        })
         .join('');
     } catch (err) {
       sel.innerHTML = '<option value="">Could not load sheet groups</option>';
     }
   } else {
     const src = document.getElementById('fwdSource');
-    sel.innerHTML = Array.from(src.options)
+    sel.innerHTML = placeholder + Array.from(src.options)
       .filter((o) => o.value)
       .map((o) => `<option value="${_esc(o.value)}">${_esc(o.textContent)}</option>`)
       .join('');
@@ -99,6 +107,10 @@ async function _fwdSaveRule() {
   out.style.display = 'block';
   if (!body.sourceGroupId) {
     out.innerHTML = '<span style="color:#c62828">Pick a source group.</span>';
+    return;
+  }
+  if (!body.targetSheetGroup && !body.targetChatId) {
+    out.innerHTML = '<span style="color:#c62828">Pick a target — who should receive the forward.</span>';
     return;
   }
 
@@ -136,6 +148,13 @@ function _fwdRenderRules() {
       <div class="fwd-rule-meta">watches <code>${_esc(r.sourceGroupId)}</code> · ${_esc(when)} ·
         keywords: ${_esc(keys)} · every ${r.pollMinutes} min → <strong>${_esc(target)}</strong></div>
       <div class="fwd-rule-actions">
+        <select class="form-input fwd-range" title="Which days to look at">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="all">Everything fetched</option>
+        </select>
         <button class="btn btn-ghost fwd-check">🔍 Check now</button>
         <button class="btn btn-ghost fwd-toggle">${r.active ? '⏸ Turn off' : '▶ Turn on'}</button>
         <button class="btn btn-ghost fwd-mode">${r.mode === 'auto' ? 'Require approval' : 'Send automatically'}</button>
@@ -174,12 +193,31 @@ async function _fwdDelete(id) {
   loadForwardRules();
 }
 
+/** Local-day boundaries, so "today" means today where you are, not in UTC. */
+function _fwdRange(choice) {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end   = new Date(); end.setHours(23, 59, 59, 999);
+
+  if (choice === 'all')       return null;
+  if (choice === 'today')     return { from: start.getTime(), to: end.getTime() };
+  if (choice === 'yesterday') {
+    return { from: start.getTime() - 86400000, to: start.getTime() - 1 };
+  }
+  const days = Number(choice) || 7;
+  return { from: start.getTime() - (days - 1) * 86400000, to: end.getTime() };
+}
+
 async function _fwdCheckNow(id, row) {
   const btn = row.querySelector('.fwd-check');
   btn.disabled = true;
   btn.textContent = '⏳ Checking…';
   try {
-    const res  = await fetch(`/api/forward-rules/${encodeURIComponent(id)}/check-now`, { method: 'POST' });
+    const range = _fwdRange(row.querySelector('.fwd-range').value);
+    const res   = await fetch(`/api/forward-rules/${encodeURIComponent(id)}/check-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(range || {}),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Check failed');
     btn.textContent = `${(data.matches || []).length} match(es)`;

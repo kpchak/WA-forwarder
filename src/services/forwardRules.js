@@ -140,6 +140,14 @@ function create(data) {
     lastMatchAt:   null,
   };
   if (!rule.sourceGroupId) throw new Error('sourceGroupId is required');
+  // A rule with no target would, at delivery time, either throw or fall back to
+  // whatever happened to be first. Refuse it here instead.
+  if (rule.targetType === 'chat' && !rule.targetChatId) {
+    throw new Error('targetChatId is required when targetType is "chat"');
+  }
+  if (rule.targetType === 'sheetGroup' && !rule.targetSheetGroup) {
+    throw new Error('targetSheetGroup is required when targetType is "sheetGroup"');
+  }
   _rules.push(rule);
   _saveRules();
   return rule;
@@ -172,7 +180,12 @@ function _dueForPoll(rule, now) {
   return now - new Date(rule.lastPollAt).getTime() >= rule.pollMinutes * 60 * 1000;
 }
 
-async function _pollRule(rule) {
+/**
+ * @param range {fromSec, toSec} — which messages to consider at all, separate
+ *   from the rule's time-of-day window. Without it a check would happily match
+ *   a message from last Tuesday that happened to fall in the 04:00-05:00 window.
+ */
+async function _pollRule(rule, range = null) {
   const waId = toWAId(rule.sourceGroupId);
   if (!waId) throw new Error(`Rule "${rule.label}": invalid source id`);
 
@@ -186,6 +199,7 @@ async function _pollRule(rule) {
     const id = m.id?._serialized || m.id?.$1;
     if (!id || _seen.includes(id)) continue;
     if (m.fromMe) continue;                       // never forward our own sends
+    if (range && (m.timestamp < range.fromSec || m.timestamp > range.toSec)) continue;
     if (!timestampInWindow(rule, m.timestamp)) continue;
     if (!messageMatches(rule, m)) continue;
 
@@ -224,7 +238,17 @@ async function tick() {
 
   for (const rule of due) {
     try {
-      const matches = await _pollRule(rule);
+      // Only look at messages since the last poll. On the very first poll after
+      // a rule is switched on, look back one hour and no further: without this
+      // an old message still sitting in the fetch would be forwarded the moment
+      // the rule goes live, because nothing is in the dedupe list yet.
+      const sinceMs = rule.lastPollAt
+        ? new Date(rule.lastPollAt).getTime() - 2 * 60 * 1000   // small overlap
+        : Date.now() - 60 * 60 * 1000;
+      const matches = await _pollRule(rule, {
+        fromSec: Math.floor(sinceMs / 1000),
+        toSec:   Infinity,
+      });
       rule.lastPollAt = new Date().toISOString();
 
       for (const match of matches) {
@@ -342,12 +366,16 @@ function dismiss(pendingId) {
   return match;
 }
 
-/** Manual "check now" — ignores the poll interval, still respects the window. */
-async function checkNow(ruleId) {
+/**
+ * Manual "check now" — ignores the poll interval and takes an explicit date
+ * range (today, yesterday, last 7 days …) chosen in the UI. The rule's
+ * time-of-day window still applies on top of it.
+ */
+async function checkNow(ruleId, range = null) {
   const rule = _rules.find((r) => r.id === ruleId);
   if (!rule) throw new Error('Rule not found');
 
-  const matches = await _pollRule(rule);
+  const matches = await _pollRule(rule, range);
   rule.lastPollAt = new Date().toISOString();
   _saveRules();
 

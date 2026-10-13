@@ -41,7 +41,12 @@ router.delete('/:id', (req, res) => {
 // Reads the source group immediately instead of waiting for the poll interval.
 router.post('/:id/check-now', async (req, res) => {
   try {
-    const matches = await rules.checkNow(req.params.id);
+    const { from, to } = req.body || {};
+    const range = from
+      ? { fromSec: Math.floor(Number(from) / 1000),
+          toSec:   to ? Math.floor(Number(to) / 1000) : Infinity }
+      : null;
+    const matches = await rules.checkNow(req.params.id, range);
     res.json({ ok: true, matches, pending: rules.listPending() });
   } catch (err) {
     res.status(503).json({ error: err.message });
