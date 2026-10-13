@@ -335,7 +335,7 @@ const tabBtns   = document.querySelectorAll('.tab-btn');
 const tabPanels = document.querySelectorAll('.tab-panel');
 
 // Tabs that require WhatsApp to be connected before they're usable
-const REQUIRES_CONNECTED = ['groups', 'send', 'schedule', 'messages'];
+const REQUIRES_CONNECTED = ['groups', 'send', 'schedule', 'messages', 'forward'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let qrTimer = null;
@@ -444,6 +444,7 @@ tabBtns.forEach((btn) => {
     if (tabId === 'groups')     loadGroups();
     if (tabId === 'send')       {/* send tab removed */}
     if (tabId === 'schedule')   initScheduleTab();
+    if (tabId === 'forward')    initForwardTab();
     if (tabId === 'messages')   initMessagesTab();
   });
 });

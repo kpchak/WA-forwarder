@@ -11,6 +11,7 @@ const path    = require('path');
 const wa         = require('./src/whatsapp/client');
 const scheduler  = require('./src/services/scheduler');
 const attendance = require('./src/services/attendance');
+const forwardRules = require('./src/services/forwardRules');
 
 // ── Express + Socket.IO ───────────────────────────────────────────────────────
 const app        = express();
@@ -49,6 +50,7 @@ app.use('/api/attendance', require('./src/routes/attendance'));
 app.use('/api/templates',      require('./src/routes/templateStore'));
 app.use('/api/chat-messages', require('./src/routes/chatMessages'));
 app.use('/api/sheet-writer',  require('./src/routes/sheetWriter'));
+app.use('/api/forward-rules', require('./src/routes/forwardRules'));
 
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
@@ -76,5 +78,6 @@ httpServer.listen(PORT, () => {
   console.log(`[Server] Listening on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
   attendance.init();  // load attendance records and config
   scheduler.init();   // load saved schedules and start cron jobs
+  forwardRules.init(); // load forward rules and start the poll timer
   wa.start();
 });

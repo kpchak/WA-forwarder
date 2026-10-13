@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WA Customer Manager</title>
-  <link rel="stylesheet" href="style.css?v=18" />
+  <link rel="stylesheet" href="style.css?v=19" />
 </head>
 <body>
 <div class="app">
@@ -24,6 +24,7 @@
     <button class="tab-btn"        data-tab="groups"     role="tab" disabled>👥 Groups</button>
     <button class="tab-btn"        data-tab="messages"   role="tab" disabled>📨 Messages</button>
     <button class="tab-btn"        data-tab="schedule"   role="tab" disabled>📅 Schedule</button>
+    <button class="tab-btn"        data-tab="forward"    role="tab" disabled>↪️ Auto-Forward</button>
   </nav>
 
   <!-- ── Connect tab ──────────────────────────────────────────────────────── -->
@@ -451,9 +452,112 @@
 
   </div>
 
+  <!-- ── Auto-Forward tab ──────────────────────────────────────────────────── -->
+  <div class="tab-panel" id="tab-forward" role="tabpanel">
+
+    <!-- Awaiting approval -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="groups-toolbar">
+        <span class="card-title" style="margin:0">📨 Awaiting your approval</span>
+        <span class="cache-age" id="fwdPendingCount"></span>
+      </div>
+      <div id="fwdPendingList"></div>
+    </div>
+
+    <!-- New rule -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="groups-toolbar">
+        <span class="card-title" style="margin:0">➕ New rule</span>
+        <button class="btn btn-ghost" id="fwdFormToggle" style="padding:6px 12px;font-size:0.82rem;">▼ Expand</button>
+      </div>
+      <div id="fwdFormBody" style="display:none;">
+        <div class="form-row">
+          <div class="form-col">
+            <label class="form-label" for="fwdLabel">Rule name</label>
+            <input type="text" id="fwdLabel" class="form-input" placeholder="Zoom link to LO26Y" />
+          </div>
+          <div class="form-col">
+            <label class="form-label" for="fwdSource">Watch this WhatsApp group</label>
+            <select id="fwdSource" class="form-input"><option value="">— load groups first —</option></select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-col">
+            <label class="form-label" for="fwdKeywords">Keywords (comma separated, blank = any message)</label>
+            <input type="text" id="fwdKeywords" class="form-input" placeholder="zoom, meet" />
+          </div>
+          <div class="form-col">
+            <label class="form-label">Only messages containing a link</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88rem;margin-top:8px;">
+              <input type="checkbox" id="fwdRequireLink" /> require a http(s) link
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-col">
+            <label class="form-label" for="fwdWindowStart">Between (IST)</label>
+            <input type="time" id="fwdWindowStart" class="form-input" value="04:00" />
+          </div>
+          <div class="form-col">
+            <label class="form-label" for="fwdWindowEnd">and</label>
+            <input type="time" id="fwdWindowEnd" class="form-input" value="05:00" />
+          </div>
+          <div class="form-col">
+            <label class="form-label" for="fwdPollMinutes">Check every (minutes)</label>
+            <input type="number" id="fwdPollMinutes" class="form-input" min="1" value="5" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-col">
+            <label class="form-label" for="fwdTargetType">Send to</label>
+            <select id="fwdTargetType" class="form-input">
+              <option value="sheetGroup">every member of a sheet group (individually)</option>
+              <option value="chat">one WhatsApp group</option>
+            </select>
+          </div>
+          <div class="form-col">
+            <label class="form-label" for="fwdTarget">Target</label>
+            <select id="fwdTarget" class="form-input"></select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-col">
+            <label class="form-label" for="fwdPrefix">Prefix (optional)</label>
+            <input type="text" id="fwdPrefix" class="form-input" placeholder="Today's class link:" />
+          </div>
+          <div class="form-col">
+            <label class="form-label" for="fwdSuffix">Suffix (optional)</label>
+            <input type="text" id="fwdSuffix" class="form-input" placeholder="— MM team" />
+          </div>
+        </div>
+
+        <div id="fwdFormResult" style="display:none;margin-bottom:10px;"></div>
+        <button class="btn btn-primary" id="fwdSaveBtn">💾 Save rule</button>
+        <p class="qr-sub" style="margin-top:10px;">
+          New rules are saved switched <strong>off</strong>. Turn one on only after
+          “Check now” shows it matching what you expect.
+        </p>
+      </div>
+    </div>
+
+    <!-- Rules -->
+    <div class="card">
+      <div class="groups-toolbar">
+        <span class="card-title" style="margin:0">⚙️ Rules</span>
+        <button class="btn btn-ghost" id="fwdReloadBtn" style="padding:7px 14px;font-size:0.82rem;">🔄 Reload</button>
+      </div>
+      <div id="fwdRulesList"></div>
+    </div>
+  </div>
+
 </div><!-- /.app -->
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
+<script src="forward.js?v=1"></script>
 </body>
 </html>

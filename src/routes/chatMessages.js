@@ -7,6 +7,7 @@ const sheets           = require('../services/sheets');
 const { MessageMedia }   = require('whatsapp-web.js');
 const { resolveTemplates } = require('../utils/templates');
 const { toWAId: _toWAId } = require("../utils/waId");
+const chatIndex = require("../services/chatIndex");
 
 // Cache loaded Message objects (30-min TTL) so media can be fetched on demand
 const _msgCache = new Map(); // serializedId → { msg, savedAt }
@@ -42,60 +43,13 @@ router.get('/health', async (req, res) => {
 // chat list and has detached the frame before, so the result is cached and only
 // re-read when ?refresh=1 is asked for explicitly. The UI never calls it on its
 // own for the same reason.
-const SWEEP_TTL_MS = 10 * 60 * 1000;
-const _sweep = { chats: null, groups: null, at: 0 };
-let _sweepLock = null;   // one sweep at a time, however many callers want it
-
-function _chatId(c) {
-  return String(c.id?._serialized || c.id?.$1 || '');   // $1: renamed by WhatsApp, Jul 2026
-}
-
-/**
- * getChats() once, shared by the group picker and by group message loading.
- * It is the heavy call that detached the frame repeatedly in late September, so
- * it is cached, never run concurrently, and never triggered just by opening a
- * tab — only by an explicit Load, or by a load that actually names a group.
- */
-async function _chatSweep(force = false) {
-  if (!force && _sweep.chats && Date.now() - _sweep.at < SWEEP_TTL_MS) return _sweep;
-  if (_sweepLock) return _sweepLock;
-
-  _sweepLock = (async () => {
-    await wa.assertConnected();
-    const chats = await wa.getClient().getChats();
-
-    // An empty list from an account with hundreds of chats means the page is
-    // not really ready — usually moments after a restart. Fail instead of
-    // caching it: a cached empty sweep reports every group as "not found" for
-    // the next ten minutes, which is both wrong and hard to interpret.
-    if (!chats.length) {
-      throw new Error('WhatsApp returned an empty chat list — the client is still settling, try again shortly');
-    }
-
-    _sweep.chats  = chats;
-    _sweep.groups = chats
-      .filter((c) => c.isGroup)
-      .map((c) => ({
-        name: c.name || '(unnamed group)',
-        id:   _chatId(c).replace(/@g\.us$/, ''),
-        lastActivity: c.timestamp || 0,
-      }))
-      .filter((g) => g.id)
-      .sort((a, b) => b.lastActivity - a.lastActivity);
-    _sweep.at = Date.now();
-    return _sweep;
-  })().finally(() => { _sweepLock = null; });
-
-  return _sweepLock;
-}
-
 router.get('/wa-groups', async (req, res) => {
   const refresh = req.query.refresh === '1';
-  if (!refresh && _sweep.groups) {
-    return res.json({ groups: _sweep.groups, cachedAt: _sweep.at, cached: true });
+  if (!refresh && chatIndex.cachedGroups()?.groups) {
+    return res.json({ groups: chatIndex.cachedGroups()?.groups, cachedAt: chatIndex.cachedGroups()?.at, cached: true });
   }
   try {
-    const s = await _chatSweep(true);
+    const s = await chatIndex.sweep(true);
     res.json({ groups: s.groups, cachedAt: s.at, cached: false });
   } catch (err) {
     console.warn('[ChatMessages] wa-groups failed:', err.message);
@@ -180,8 +134,8 @@ router.post('/load', async (req, res) => {
     let groupIndex = null;
     if (wantedGroupIds.length) {
       try {
-        const build = (sweep) => new Map((sweep.chats || []).map((c) => [_chatId(c), c]));
-        groupIndex  = build(await _chatSweep());
+        const build = (sweep) => new Map((sweep.chats || []).map((c) => [chatIndex.chatId(c), c]));
+        groupIndex  = build(await chatIndex.sweep());
 
         // Shortly after a restart getChats() can return a partial list: enough
         // chats to look healthy, but not yet the one being asked for. Treating
@@ -189,7 +143,7 @@ router.post('/load', async (req, res) => {
         // Re-sweep once before believing a miss.
         if (wantedGroupIds.some((id) => !groupIndex.has(id))) {
           console.warn('[ChatMessages] Group missing from chat list — re-reading once');
-          groupIndex = build(await _chatSweep(true));
+          groupIndex = build(await chatIndex.sweep(true));
         }
       } catch (err) {
         warnings.push(`Could not read the group list: ${err.message}`);
