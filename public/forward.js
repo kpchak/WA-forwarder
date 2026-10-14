@@ -115,13 +115,24 @@ async function _fwdSaveRule() {
   }
 
   try {
-    const res = await fetch('/api/forward-rules', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
+    const editing = _fwdEditingId;
+    const res = await fetch(
+      editing ? `/api/forward-rules/${encodeURIComponent(editing)}` : '/api/forward-rules',
+      { method: editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body) }
+    );
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Save failed');
-    out.innerHTML = '<span style="color:#2e7d32">Saved — switched off. Use “Check now” before turning it on.</span>';
-    document.getElementById('fwdLabel').value = '';
+
+    if (editing) {
+      _fwdEditingId = null;
+      document.getElementById('fwdSaveBtn').textContent = '💾 Save rule';
+      out.innerHTML = '<span style="color:#2e7d32">Changes saved.</span>';
+    } else {
+      out.innerHTML = '<span style="color:#2e7d32">Saved — switched off. Use “Check now” before turning it on.</span>';
+      document.getElementById('fwdLabel').value = '';
+    }
     loadForwardRules();
   } catch (err) {
     out.innerHTML = `<span style="color:#c62828">${_esc(err.message)}</span>`;
@@ -148,6 +159,7 @@ function _fwdRenderRules() {
       <div class="fwd-rule-meta">watches <code>${_esc(r.sourceGroupId)}</code> · ${_esc(when)} ·
         keywords: ${_esc(keys)} · every ${r.pollMinutes} min → <strong>${_esc(target)}</strong></div>
       <div class="fwd-rule-actions">
+        <button class="btn btn-ghost fwd-edit">✏️ Edit</button>
         <select class="form-input fwd-range" title="Which days to look at">
           <option value="today">Today</option>
           <option value="yesterday">Yesterday</option>
@@ -164,6 +176,7 @@ function _fwdRenderRules() {
 
   el.querySelectorAll('.fwd-rule').forEach((row) => {
     const id = row.dataset.id;
+    row.querySelector('.fwd-edit').addEventListener('click', () => _fwdStartEdit(id));
     row.querySelector('.fwd-check').addEventListener('click', () => _fwdCheckNow(id, row));
     row.querySelector('.fwd-toggle').addEventListener('click', () => {
       const r = _fwdRules.find((x) => x.id === id);
@@ -179,6 +192,71 @@ function _fwdRenderRules() {
       if (confirm('Delete this rule?')) _fwdDelete(id);
     });
   });
+}
+
+// Editing reuses the create form rather than adding a second one, so the two
+// can never drift apart. _fwdEditingId decides whether Save creates or updates.
+let _fwdEditingId = null;
+
+/** Add a value to a <select> if the list does not already offer it. */
+function _fwdEnsureOption(selectId, value, label) {
+  if (!value) return;
+  const sel = document.getElementById(selectId);
+  if (Array.from(sel.options).some((o) => o.value === value)) return;
+  const opt = document.createElement('option');
+  opt.value = value;
+  opt.textContent = label || value;
+  sel.appendChild(opt);
+}
+
+async function _fwdStartEdit(id) {
+  const r = _fwdRules.find((x) => x.id === id);
+  if (!r) return;
+
+  const body = document.getElementById('fwdFormBody');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    document.getElementById('fwdFormToggle').textContent = '▲ Collapse';
+  }
+  await _fwdFillPickers();                 // populate before selecting values
+
+  document.getElementById('fwdLabel').value        = r.label || '';
+
+  // The source list comes from the WhatsApp sweep, which can be unavailable
+  // (just after a restart, say). Without this the rule's own source would
+  // silently blank out and the edit could not be saved at all.
+  _fwdEnsureOption('fwdSource', r.sourceGroupId, `current source (${r.sourceGroupId})`);
+  document.getElementById('fwdSource').value       = r.sourceGroupId || '';
+  document.getElementById('fwdKeywords').value     = (r.keywords || []).join(', ');
+  document.getElementById('fwdRequireLink').checked = !!r.requireLink;
+  document.getElementById('fwdWindowStart').value  = r.windowStart || '';
+  document.getElementById('fwdWindowEnd').value    = r.windowEnd || '';
+  document.getElementById('fwdPollMinutes').value  = r.pollMinutes || 5;
+  document.getElementById('fwdPrefix').value       = r.prefix || '';
+  document.getElementById('fwdSuffix').value       = r.suffix || '';
+
+  const type = document.getElementById('fwdTargetType');
+  type.value = r.targetType || 'sheetGroup';
+  await _fwdFillTargets();
+  const current = r.targetType === 'chat' ? (r.targetChatId || '') : (r.targetSheetGroup || '');
+  _fwdEnsureOption('fwdTarget', current, `current target (${current})`);
+  document.getElementById('fwdTarget').value = current;
+
+  _fwdEditingId = id;
+  document.getElementById('fwdSaveBtn').textContent = '💾 Save changes';
+  const result = document.getElementById('fwdFormResult');
+  result.style.display = 'block';
+  result.innerHTML = `<span style="color:var(--text-muted)">Editing <strong>${_esc(r.label)}</strong> — ` +
+    `<a href="#" id="fwdCancelEdit">cancel</a></span>`;
+  document.getElementById('fwdCancelEdit').addEventListener('click', (e) => { e.preventDefault(); _fwdCancelEdit(); });
+  body.scrollIntoView({ block: 'center' });
+}
+
+function _fwdCancelEdit() {
+  _fwdEditingId = null;
+  document.getElementById('fwdSaveBtn').textContent = '💾 Save rule';
+  document.getElementById('fwdFormResult').style.display = 'none';
+  ['fwdLabel','fwdKeywords','fwdPrefix','fwdSuffix'].forEach((f) => { document.getElementById(f).value = ''; });
 }
 
 async function _fwdUpdate(id, patch) {
@@ -240,7 +318,15 @@ function _fwdRenderPending() {
     return;
   }
 
-  el.innerHTML = open.map((p) => `
+  // Items whose rule was deleted can never be approved — approval needs the
+  // rule's target. Offer to clear them rather than leaving dead work in the list.
+  const orphans = open.filter((p) => !_fwdRules.some((r) => r.id === p.ruleId)).length;
+  const controls = `<div class="fwd-rule-actions" style="margin-bottom:10px;">
+      ${orphans ? `<button class="btn btn-ghost" id="fwdClearOrphans">🧹 Clear ${orphans} un-approvable item${orphans === 1 ? '' : 's'}</button>` : ''}
+      <button class="btn btn-ghost" id="fwdClearAll">Clear all ${open.length}</button>
+    </div>`;
+
+  el.innerHTML = controls + open.map((p) => `
     <div class="fwd-pending" data-id="${_esc(p.id)}">
       <div class="fwd-rule-meta">${_esc(p.ruleLabel)} · from ${_esc(p.author)} ·
         ${new Date(p.timestamp * 1000).toLocaleString()}${p.hasMedia ? ' · <strong>has an attachment</strong>' : ''}</div>
@@ -257,6 +343,10 @@ function _fwdRenderPending() {
     row.querySelector('.fwd-approve').addEventListener('click', () => _fwdApprove(id, row));
     row.querySelector('.fwd-dismiss').addEventListener('click', () => _fwdDismiss(id));
   });
+
+  const clearOrphans = document.getElementById('fwdClearOrphans');
+  if (clearOrphans) clearOrphans.addEventListener('click', () => _fwdClear(true));
+  document.getElementById('fwdClearAll').addEventListener('click', () => _fwdClear(false));
 }
 
 /** Who a pending item would go to — shown before approval, not after. */
@@ -288,6 +378,15 @@ async function _fwdApprove(id, row) {
     btn.textContent = '✅ Send it';
     alert(`Could not send: ${err.message}`);
   }
+}
+
+async function _fwdClear(orphansOnly) {
+  const what = orphansOnly ? 'the items that can no longer be approved' : 'everything waiting';
+  if (!confirm(`Clear ${what}? Nothing is sent — they are removed from the queue. A backup is kept.`)) return;
+  const res  = await fetch(`/api/forward-rules/pending/clear${orphansOnly ? '?orphans=1' : ''}`, { method: 'POST' });
+  const data = await res.json();
+  _fwdPending = data.pending || [];
+  _fwdRenderPending();
 }
 
 async function _fwdDismiss(id) {

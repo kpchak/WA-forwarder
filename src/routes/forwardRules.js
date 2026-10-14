@@ -6,7 +6,18 @@ const rules   = require('../services/forwardRules');
 
 // ── GET /api/forward-rules ────────────────────────────────────────────────────
 router.get('/', (req, res) => {
-  res.json({ rules: rules.list(), pending: rules.listPending() });
+  res.json({ rules: rules.list(), pending: rules.listPending(), orphans: rules.countOrphans() });
+});
+
+// ── POST /api/forward-rules/pending/clear ─────────────────────────────────────
+// ?orphans=1 clears only items whose rule has been deleted.
+router.post('/pending/clear', (req, res) => {
+  try {
+    const orphansOnly = req.query.orphans === '1' || req.body?.orphansOnly === true;
+    res.json({ ok: true, ...rules.dismissAll({ orphansOnly }), pending: rules.listPending() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ── POST /api/forward-rules ───────────────────────────────────────────────────

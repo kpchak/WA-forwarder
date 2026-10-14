@@ -424,6 +424,33 @@ async function approve(pendingId) {
   return result;
 }
 
+/**
+ * Dismiss every open pending item, optionally only the orphans.
+ *
+ * A deleted rule leaves its matches behind: they cannot be approved, because
+ * approval needs the rule's target, but they still sit in the queue looking
+ * like work. Clearing one at a time is the only alternative.
+ */
+function dismissAll({ orphansOnly = false } = {}) {
+  const liveIds = new Set(_rules.map((r) => r.id));
+  const targets = _pending.filter((p) =>
+    p.status === 'pending' && (!orphansOnly || !liveIds.has(p.ruleId)));
+
+  if (!targets.length) return { dismissed: 0 };
+
+  backup(orphansOnly ? 'dismiss-orphans' : 'dismiss-all');
+  const stamp = new Date().toISOString();
+  for (const p of targets) { p.status = 'dismissed'; p.dismissedAt = stamp; }
+  _savePending();
+  return { dismissed: targets.length };
+}
+
+/** Pending items whose rule no longer exists — shown, but not approvable. */
+function countOrphans() {
+  const liveIds = new Set(_rules.map((r) => r.id));
+  return _pending.filter((p) => p.status === 'pending' && !liveIds.has(p.ruleId)).length;
+}
+
 function dismiss(pendingId) {
   const match = _pending.find((p) => p.id === pendingId);
   if (!match) throw new Error('Pending item not found');
@@ -469,7 +496,7 @@ function init() {
 module.exports = {
   init, list, create, update, remove,
   backup, listBackups, restoreBackup,
-  listPending, approve, dismiss, checkNow, deliver, tick,
+  listPending, approve, dismiss, dismissAll, countOrphans, checkNow, deliver, tick,
   // exported for tests
   messageMatches, timestampInWindow, _inWindow,
 };
