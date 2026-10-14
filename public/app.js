@@ -1897,7 +1897,18 @@ msgForwardBtn.addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
-    _vmsgSetFwdResult('ok', `✅ Forwarded to ${data.sent} member${data.sent !== 1 ? 's' : ''}${data.failed ? ` · ${data.failed} failed` : ''}`);
+    // "Forwarded to 0 members · 1 failed" used to render in the success box,
+    // and the per-recipient reason was dropped entirely. Style by outcome and
+    // show why each recipient failed.
+    const failures = (data.results || []).filter((r) => !r.ok);
+    const detail = failures.length
+      ? '<ul style="margin:6px 0 0;padding-left:20px;">' + failures.map((r) =>
+          `<li>${_esc(r.name || r.phone)}: ${_esc(r.error || 'unknown error')}</li>`).join('') + '</ul>'
+      : '';
+    const headline = data.sent
+      ? `✅ Forwarded to ${data.sent} member${data.sent !== 1 ? 's' : ''}${data.failed ? ` · ${data.failed} failed` : ''}`
+      : `❌ Not forwarded — ${data.failed} recipient${data.failed !== 1 ? 's' : ''} failed`;
+    _vmsgSetFwdResult(data.sent ? 'ok' : 'error', headline + detail);
   } catch (err) {
     _vmsgSetFwdResult('error', `❌ ${err.message}`);
   } finally {

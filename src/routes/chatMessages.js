@@ -286,7 +286,11 @@ router.post('/forward', async (req, res) => {
     const results = [];
     for (const member of members) {
       const waId = _toWAId(member.phone);
-      if (!waId) { results.push({ name: member.name, phone: member.phone, ok: false, error: 'Invalid phone' }); continue; }
+      if (!waId) {
+        console.warn(`[Forward] Invalid phone for ${member.name || '(no name)'}: ${JSON.stringify(member.phone)}`);
+        results.push({ name: member.name, phone: member.phone, ok: false, error: 'Invalid phone' });
+        continue;
+      }
       const name = member.name || '';
       const pre  = resolveTemplates(prefix  || '', now, name);
       const cap  = resolveTemplates(caption || '', now, name);
@@ -304,6 +308,10 @@ router.post('/forward', async (req, res) => {
         }
         results.push({ name: member.name, phone: member.phone, ok: true });
       } catch (err) {
+        // Previously the reason lived only in the HTTP response, which the UI
+        // discarded in favour of a count — so a failed forward left no trace
+        // anywhere and could not be diagnosed after the fact.
+        console.warn(`[Forward] FAILED → ${member.name || '(no name)'} <${waId}>: ${err.message}`);
         results.push({ name: member.name, phone: member.phone, ok: false, error: err.message });
       }
       await _sleep(500);
